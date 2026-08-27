@@ -7,14 +7,97 @@ import {
   timestamp,
   date,
   index,
-  foreignKey,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+
+// ----------------------------------------------------
+// USERS & AUTHENTICATION TABLES
+// ----------------------------------------------------
+
+export const users = pgTable("users", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  autoLockTimeout: text("auto_lock_timeout").notNull().default("never"), // 'immediately' | '1m' | '5m' | 'never'
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const passkeyCredentials = pgTable(
+  "passkey_credentials",
+  {
+    id: text("id").primaryKey(), // base64url credential ID
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    publicKey: text("public_key").notNull(), // base64url encoded public key
+    counter: numeric("counter").notNull().default("0"),
+    deviceType: text("device_type"), // 'singleDevice' | 'multiDevice'
+    backedUp: boolean("backed_up").notNull().default(false),
+    transports: text("transports"), // JSON string e.g. ["internal", "hybrid"]
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (table) => [index("idx_passkeys_user").on(table.userId)]
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(), // session token hash
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("idx_sessions_user").on(table.userId)]
+);
+
+export const webauthnChallenges = pgTable(
+  "webauthn_challenges",
+  {
+    id: text("id").primaryKey(), // challenge session identifier
+    challenge: text("challenge").notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("idx_challenges_user").on(table.userId)]
+);
+
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: text("id").primaryKey(), // token identifier
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("idx_reset_tokens_user").on(table.userId)]
+);
+
+// ----------------------------------------------------
+// FINANCIAL TABLES (WITH USER ISOLATION)
+// ----------------------------------------------------
 
 export const accounts = pgTable(
   "accounts",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     type: text("type").notNull(), // 'bank' | 'e_wallet' | 'cash' | 'international_card' | 'other'
     currency: text("currency").notNull(), // 'CNY' | 'MAD' | 'USD' | 'EUR' etc.
@@ -30,6 +113,7 @@ export const accounts = pgTable(
       .notNull(),
   },
   (table) => [
+    index("idx_accounts_user").on(table.userId),
     index("idx_accounts_currency").on(table.currency),
     index("idx_accounts_archived").on(table.isArchived),
   ]
@@ -39,6 +123,7 @@ export const categories = pgTable(
   "categories",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     parentId: uuid("parent_id"),
     type: text("type"), // 'expense' | 'income' | 'both'
@@ -51,6 +136,7 @@ export const categories = pgTable(
       .notNull(),
   },
   (table) => [
+    index("idx_categories_user").on(table.userId),
     index("idx_categories_parent").on(table.parentId),
     index("idx_categories_archived").on(table.isArchived),
   ]
@@ -60,6 +146,7 @@ export const people = pgTable(
   "people",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     note: text("note"),
     isArchived: boolean("is_archived").notNull().default(false),
@@ -70,23 +157,32 @@ export const people = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("idx_people_archived").on(table.isArchived)]
+  (table) => [
+    index("idx_people_user").on(table.userId),
+    index("idx_people_archived").on(table.isArchived),
+  ]
 );
 
-export const exchangeRates = pgTable("exchange_rates", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  fromCurrency: text("from_currency").notNull(),
-  toCurrency: text("to_currency").notNull(),
-  rate: numeric("rate", { precision: 15, scale: 6 }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const exchangeRates = pgTable(
+  "exchange_rates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    fromCurrency: text("from_currency").notNull(),
+    toCurrency: text("to_currency").notNull(),
+    rate: numeric("rate", { precision: 15, scale: 6 }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("idx_exchange_rates_user").on(table.userId)]
+);
 
 export const transactions = pgTable(
   "transactions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
     type: text("type").notNull(), // 'expense' | 'income' | 'transfer' | 'withdrawal' | 'deposit' | 'top_up'
     title: text("title").notNull(),
     transactionDate: date("transaction_date", { mode: "string" }).notNull(),
@@ -119,7 +215,7 @@ export const transactions = pgTable(
     personId: uuid("person_id").references(() => people.id, {
       onDelete: "set null",
     }),
-    personTransferType: text("person_transfer_type"), // 'lend' | 'send' | 'borrow' | 'repay_to_person' | 'repayment_from_person'
+    personTransferType: text("person_transfer_type"), // 'send_with_return' | 'send_without_return' | 'receive_with_return' | 'receive_without_return' | 'lend' | 'send' | 'borrow' | 'repay_to_person' | 'repayment_from_person'
 
     note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -130,6 +226,7 @@ export const transactions = pgTable(
       .notNull(),
   },
   (table) => [
+    index("idx_transactions_user").on(table.userId),
     index("idx_transactions_date").on(table.transactionDate),
     index("idx_transactions_type").on(table.type),
     index("idx_transactions_source").on(table.sourceAccountId),
@@ -140,8 +237,35 @@ export const transactions = pgTable(
   ]
 );
 
-// Relations
-export const accountsRelations = relations(accounts, ({ many }) => ({
+// ----------------------------------------------------
+// RELATIONS
+// ----------------------------------------------------
+
+export const usersRelations = relations(users, ({ many }) => ({
+  passkeys: many(passkeyCredentials),
+  sessions: many(sessions),
+  accounts: many(accounts),
+  categories: many(categories),
+  people: many(people),
+  transactions: many(transactions),
+  exchangeRates: many(exchangeRates),
+}));
+
+export const passkeyCredentialsRelations = relations(
+  passkeyCredentials,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [passkeyCredentials.userId],
+      references: [users.id],
+    }),
+  })
+);
+
+export const accountsRelations = relations(accounts, ({ one, many }) => ({
+  user: one(users, {
+    fields: [accounts.userId],
+    references: [users.id],
+  }),
   sourceTransactions: many(transactions, { relationName: "sourceAccount" }),
   destinationTransactions: many(transactions, {
     relationName: "destinationAccount",
@@ -149,6 +273,10 @@ export const accountsRelations = relations(accounts, ({ many }) => ({
 }));
 
 export const categoriesRelations = relations(categories, ({ one, many }) => ({
+  user: one(users, {
+    fields: [categories.userId],
+    references: [users.id],
+  }),
   parent: one(categories, {
     fields: [categories.parentId],
     references: [categories.id],
@@ -163,11 +291,26 @@ export const categoriesRelations = relations(categories, ({ one, many }) => ({
   }),
 }));
 
-export const peopleRelations = relations(people, ({ many }) => ({
+export const peopleRelations = relations(people, ({ one, many }) => ({
+  user: one(users, {
+    fields: [people.userId],
+    references: [users.id],
+  }),
   transactions: many(transactions),
 }));
 
+export const exchangeRatesRelations = relations(exchangeRates, ({ one }) => ({
+  user: one(users, {
+    fields: [exchangeRates.userId],
+    references: [users.id],
+  }),
+}));
+
 export const transactionsRelations = relations(transactions, ({ one }) => ({
+  user: one(users, {
+    fields: [transactions.userId],
+    references: [users.id],
+  }),
   sourceAccount: one(accounts, {
     fields: [transactions.sourceAccountId],
     references: [accounts.id],

@@ -1,16 +1,20 @@
 import React from "react";
-import { db } from "@/db";
-import { exchangeRates } from "@/db/schema";
-import { desc } from "drizzle-orm";
+import { getExchangeRates } from "@/lib/finance/service";
+import { getUserSecurityStatus } from "@/actions/auth";
 import { SettingsClient } from "@/components/settings/SettingsClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const rates = await db
-    .select()
-    .from(exchangeRates)
-    .orderBy(desc(exchangeRates.updatedAt));
+  const [rates, securityStatus] = await Promise.all([
+    getExchangeRates(),
+    getUserSecurityStatus(),
+  ]);
 
-  return <SettingsClient initialRates={rates} />;
+  return (
+    <SettingsClient
+      initialRates={rates}
+      securityStatus={securityStatus}
+    />
+  );
 }

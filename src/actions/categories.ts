@@ -2,8 +2,9 @@
 
 import { db } from "@/db";
 import { categories, transactions } from "@/db/schema";
-import { eq, or, sql } from "drizzle-orm";
+import { eq, or, and } from "drizzle-orm";
 import { safeRevalidatePath } from "@/lib/safe-revalidate";
+import { requireAuth } from "@/lib/auth/session";
 
 export async function createCategory(formData: {
   name: string;
@@ -11,11 +12,14 @@ export async function createCategory(formData: {
   type?: string | null;
 }) {
   try {
+    const user = await requireAuth();
+
     if (!formData.name?.trim()) {
       return { success: false, error: "Category name is required." };
     }
 
     await db.insert(categories).values({
+      userId: user.id,
       name: formData.name.trim(),
       parentId: formData.parentId || null,
       type: formData.type || "both",
@@ -39,6 +43,8 @@ export async function updateCategory(
   }
 ) {
   try {
+    const user = await requireAuth();
+
     if (!formData.name?.trim()) {
       return { success: false, error: "Category name is required." };
     }
@@ -50,7 +56,7 @@ export async function updateCategory(
         parentId: formData.parentId || null,
         updatedAt: new Date(),
       })
-      .where(eq(categories.id, id));
+      .where(and(eq(categories.id, id), eq(categories.userId, user.id)));
 
     safeRevalidatePath("/categories");
     safeRevalidatePath("/transactions");
@@ -63,14 +69,19 @@ export async function updateCategory(
 
 export async function deleteOrArchiveCategory(id: string) {
   try {
+    const user = await requireAuth();
+
     // Check if category is used in transactions
     const used = await db
       .select({ id: transactions.id })
       .from(transactions)
       .where(
-        or(
-          eq(transactions.parentCategoryId, id),
-          eq(transactions.childCategoryId, id)
+        and(
+          eq(transactions.userId, user.id),
+          or(
+            eq(transactions.parentCategoryId, id),
+            eq(transactions.childCategoryId, id)
+          )
         )
       )
       .limit(1);
@@ -80,7 +91,7 @@ export async function deleteOrArchiveCategory(id: string) {
       await db
         .update(categories)
         .set({ isArchived: true, updatedAt: new Date() })
-        .where(eq(categories.id, id));
+        .where(and(eq(categories.id, id), eq(categories.userId, user.id)));
 
       safeRevalidatePath("/categories");
       safeRevalidatePath("/transactions");
@@ -93,7 +104,7 @@ export async function deleteOrArchiveCategory(id: string) {
       const children = await db
         .select({ id: categories.id })
         .from(categories)
-        .where(eq(categories.parentId, id));
+        .where(and(eq(categories.parentId, id), eq(categories.userId, user.id)));
 
       if (children.length > 0) {
         // Archive parent and children
@@ -101,7 +112,10 @@ export async function deleteOrArchiveCategory(id: string) {
           .update(categories)
           .set({ isArchived: true, updatedAt: new Date() })
           .where(
-            or(eq(categories.id, id), eq(categories.parentId, id))
+            and(
+              eq(categories.userId, user.id),
+              or(eq(categories.id, id), eq(categories.parentId, id))
+            )
           );
         safeRevalidatePath("/categories");
         safeRevalidatePath("/transactions");
@@ -111,7 +125,10 @@ export async function deleteOrArchiveCategory(id: string) {
         };
       }
 
-      await db.delete(categories).where(eq(categories.id, id));
+      await db
+        .delete(categories)
+        .where(and(eq(categories.id, id), eq(categories.userId, user.id)));
+
       safeRevalidatePath("/categories");
       safeRevalidatePath("/transactions");
       return { success: true, message: "Category deleted." };
@@ -121,4 +138,3 @@ export async function deleteOrArchiveCategory(id: string) {
     return { success: false, error: err.message || "Failed to delete category" };
   }
 }
-

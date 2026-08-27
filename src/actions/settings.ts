@@ -5,6 +5,7 @@ import { exchangeRates } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { safeRevalidatePath } from "@/lib/safe-revalidate";
 import { toDecimal, isPositive } from "@/lib/finance/decimal";
+import { requireAuth } from "@/lib/auth/session";
 
 export async function upsertExchangeRate(formData: {
   fromCurrency: string;
@@ -12,6 +13,8 @@ export async function upsertExchangeRate(formData: {
   rate: string;
 }) {
   try {
+    const user = await requireAuth();
+
     const from = formData.fromCurrency.trim().toUpperCase();
     const to = formData.toCurrency.trim().toUpperCase();
     if (!from || !to) {
@@ -26,12 +29,13 @@ export async function upsertExchangeRate(formData: {
 
     const rateVal = toDecimal(formData.rate).toFixed(6);
 
-    // Check existing
+    // Check existing for this user
     const existing = await db
       .select()
       .from(exchangeRates)
       .where(
         and(
+          eq(exchangeRates.userId, user.id),
           eq(exchangeRates.fromCurrency, from),
           eq(exchangeRates.toCurrency, to)
         )
@@ -45,9 +49,10 @@ export async function upsertExchangeRate(formData: {
           rate: rateVal,
           updatedAt: new Date(),
         })
-        .where(eq(exchangeRates.id, existing[0].id));
+        .where(and(eq(exchangeRates.id, existing[0].id), eq(exchangeRates.userId, user.id)));
     } else {
       await db.insert(exchangeRates).values({
+        userId: user.id,
         fromCurrency: from,
         toCurrency: to,
         rate: rateVal,
@@ -65,7 +70,12 @@ export async function upsertExchangeRate(formData: {
 
 export async function deleteExchangeRate(id: string) {
   try {
-    await db.delete(exchangeRates).where(eq(exchangeRates.id, id));
+    const user = await requireAuth();
+
+    await db
+      .delete(exchangeRates)
+      .where(and(eq(exchangeRates.id, id), eq(exchangeRates.userId, user.id)));
+
     safeRevalidatePath("/settings");
     safeRevalidatePath("/");
     return { success: true };

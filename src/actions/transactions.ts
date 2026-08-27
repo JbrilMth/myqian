@@ -2,9 +2,10 @@
 
 import { db } from "@/db";
 import { accounts, categories, people, transactions } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { safeRevalidatePath } from "@/lib/safe-revalidate";
 import { toFixed2, isPositive } from "@/lib/finance/decimal";
+import { requireAuth } from "@/lib/auth/session";
 import type { TransactionType, PaymentChannel, PersonTransferType } from "@/lib/finance/types";
 
 export interface TransactionInput {
@@ -26,6 +27,8 @@ export interface TransactionInput {
 
 export async function createTransaction(data: TransactionInput) {
   try {
+    const user = await requireAuth();
+
     if (!data.title?.trim()) {
       return { success: false, error: "Title is required." };
     }
@@ -41,7 +44,7 @@ export async function createTransaction(data: TransactionInput) {
       const res = await db
         .select()
         .from(accounts)
-        .where(eq(accounts.id, data.sourceAccountId))
+        .where(and(eq(accounts.id, data.sourceAccountId), eq(accounts.userId, user.id)))
         .limit(1);
       if (res.length === 0) {
         return { success: false, error: "Source account not found." };
@@ -53,7 +56,7 @@ export async function createTransaction(data: TransactionInput) {
       const res = await db
         .select()
         .from(accounts)
-        .where(eq(accounts.id, data.destinationAccountId))
+        .where(and(eq(accounts.id, data.destinationAccountId), eq(accounts.userId, user.id)))
         .limit(1);
       if (res.length === 0) {
         return { success: false, error: "Destination account not found." };
@@ -61,7 +64,6 @@ export async function createTransaction(data: TransactionInput) {
       destAccount = res[0];
     }
 
-    // Normalized amount variables
     let finalSourceAccountId: string | null = data.sourceAccountId || null;
     let finalSourceAmount: string | null = null;
     let finalSourceCurrency: string | null = sourceAccount ? sourceAccount.currency : null;
@@ -70,7 +72,6 @@ export async function createTransaction(data: TransactionInput) {
     let finalDestAmount: string | null = null;
     let finalDestCurrency: string | null = destAccount ? destAccount.currency : null;
 
-    // Specific validation by type
     switch (data.type) {
       case "expense": {
         if (!sourceAccount) {
@@ -94,87 +95,69 @@ export async function createTransaction(data: TransactionInput) {
       }
       case "transfer": {
         if (data.personId) {
-          // Transfer involving a Person
           if (!data.personTransferType) {
             return {
               success: false,
-              error: "Please specify the action (with return or without return).",
+              error: "Please specify action.",
             };
           }
 
-          const rawAmount = data.sourceAmount || data.destinationAmount;
-          if (!isPositive(rawAmount)) {
-            return { success: false, error: "Amount must be greater than zero." };
-          }
-          const formattedAmount = toFixed2(rawAmount);
-
-          // Money from me -> them
-          if (
+          const isSendAction =
             data.personTransferType === "send_with_return" ||
             data.personTransferType === "send_without_return" ||
             data.personTransferType === "lend" ||
             data.personTransferType === "repay_to_person" ||
-            data.personTransferType === "send"
-          ) {
+            data.personTransferType === "send";
+
+          if (isSendAction) {
             if (!sourceAccount) {
-              return { success: false, error: "Source funding account is required." };
+              return { success: false, error: "Source account is required when sending money." };
             }
-            finalSourceAccountId = sourceAccount.id;
-            finalSourceAmount = formattedAmount;
-            finalSourceCurrency = sourceAccount.currency;
+            if (!isPositive(data.sourceAmount)) {
+              return { success: false, error: "Transfer amount must be greater than zero." };
+            }
+            finalSourceAmount = toFixed2(data.sourceAmount);
             finalDestAccountId = null;
             finalDestAmount = null;
-            finalDestCurrency = null;
-          }
-          // Money from them -> me
-          else if (
-            data.personTransferType === "receive_with_return" ||
-            data.personTransferType === "receive_without_return" ||
-            data.personTransferType === "borrow" ||
-            data.personTransferType === "repayment_from_person" ||
-            data.personTransferType === "receive"
-          ) {
+            finalDestCurrency = finalSourceCurrency;
+          } else {
             if (!destAccount) {
-              return { success: false, error: "Destination receiving account is required." };
+              return { success: false, error: "Destination account is required when receiving money." };
             }
+            if (!isPositive(data.destinationAmount)) {
+              return { success: false, error: "Transfer amount must be greater than zero." };
+            }
+            finalDestAmount = toFixed2(data.destinationAmount);
             finalSourceAccountId = null;
             finalSourceAmount = null;
-            finalSourceCurrency = null;
-            finalDestAccountId = destAccount.id;
-            finalDestAmount = formattedAmount;
-            finalDestCurrency = destAccount.currency;
+            finalSourceCurrency = finalDestCurrency;
           }
         } else {
-          // Internal account-to-account transfer
-          if (!sourceAccount) {
-            return { success: false, error: "Source account is required for a transfer." };
-          }
-          if (!destAccount) {
+          if (!sourceAccount || !destAccount) {
             return {
               success: false,
-              error: "Destination account or Person is required for a transfer.",
+              error: "Both source and destination accounts are required for an account-to-account transfer.",
             };
           }
           if (data.sourceAccountId === data.destinationAccountId) {
-            return {
-              success: false,
-              error: "Source and destination accounts cannot be the same.",
-            };
+            return { success: false, error: "Source and destination accounts cannot be the same." };
           }
           if (!isPositive(data.sourceAmount)) {
             return { success: false, error: "Transfer amount must be greater than zero." };
           }
           finalSourceAmount = toFixed2(data.sourceAmount);
-          finalDestAmount = data.destinationAmount ? toFixed2(data.destinationAmount) : finalSourceAmount;
+          finalDestAmount = data.destinationAmount
+            ? toFixed2(data.destinationAmount)
+            : finalSourceAmount;
         }
         break;
       }
       case "withdrawal": {
         if (!sourceAccount) {
-          return { success: false, error: "Source account is required for withdrawal." };
+          return { success: false, error: "Source bank/card account is required." };
         }
         if (!destAccount) {
-          return { success: false, error: "Cash account is required as destination." };
+          return { success: false, error: "Destination cash account is required." };
         }
         if (!isPositive(data.sourceAmount)) {
           return { success: false, error: "Amount deducted must be greater than zero." };
@@ -220,6 +203,7 @@ export async function createTransaction(data: TransactionInput) {
     }
 
     await db.insert(transactions).values({
+      userId: user.id,
       type: data.type,
       title: data.title.trim(),
       transactionDate: data.transactionDate,
@@ -254,6 +238,8 @@ export async function createTransaction(data: TransactionInput) {
 
 export async function updateTransaction(id: string, data: TransactionInput) {
   try {
+    const user = await requireAuth();
+
     if (!data.title?.trim()) {
       return { success: false, error: "Title is required." };
     }
@@ -268,7 +254,7 @@ export async function updateTransaction(id: string, data: TransactionInput) {
       const res = await db
         .select()
         .from(accounts)
-        .where(eq(accounts.id, data.sourceAccountId))
+        .where(and(eq(accounts.id, data.sourceAccountId), eq(accounts.userId, user.id)))
         .limit(1);
       if (res.length > 0) sourceAccount = res[0];
     }
@@ -277,7 +263,7 @@ export async function updateTransaction(id: string, data: TransactionInput) {
       const res = await db
         .select()
         .from(accounts)
-        .where(eq(accounts.id, data.destinationAccountId))
+        .where(and(eq(accounts.id, data.destinationAccountId), eq(accounts.userId, user.id)))
         .limit(1);
       if (res.length > 0) destAccount = res[0];
     }
@@ -320,88 +306,99 @@ export async function updateTransaction(id: string, data: TransactionInput) {
             };
           }
 
-          const rawAmount = data.sourceAmount || data.destinationAmount;
-          if (!isPositive(rawAmount)) {
-            return { success: false, error: "Amount must be greater than zero." };
-          }
-          const formattedAmount = toFixed2(rawAmount);
-
-          if (
+          const isSendAction =
             data.personTransferType === "send_with_return" ||
             data.personTransferType === "send_without_return" ||
             data.personTransferType === "lend" ||
             data.personTransferType === "repay_to_person" ||
-            data.personTransferType === "send"
-          ) {
+            data.personTransferType === "send";
+
+          if (isSendAction) {
             if (!sourceAccount) {
-              return { success: false, error: "Source funding account is required." };
+              return { success: false, error: "Source account is required when sending money." };
             }
-            finalSourceAccountId = sourceAccount.id;
-            finalSourceAmount = formattedAmount;
-            finalSourceCurrency = sourceAccount.currency;
+            if (!isPositive(data.sourceAmount)) {
+              return { success: false, error: "Transfer amount must be greater than zero." };
+            }
+            finalSourceAmount = toFixed2(data.sourceAmount);
             finalDestAccountId = null;
             finalDestAmount = null;
-            finalDestCurrency = null;
-          } else if (
-            data.personTransferType === "receive_with_return" ||
-            data.personTransferType === "receive_without_return" ||
-            data.personTransferType === "borrow" ||
-            data.personTransferType === "repayment_from_person" ||
-            data.personTransferType === "receive"
-          ) {
+            finalDestCurrency = finalSourceCurrency;
+          } else {
             if (!destAccount) {
-              return { success: false, error: "Destination receiving account is required." };
+              return { success: false, error: "Destination account is required when receiving money." };
             }
+            if (!isPositive(data.destinationAmount)) {
+              return { success: false, error: "Transfer amount must be greater than zero." };
+            }
+            finalDestAmount = toFixed2(data.destinationAmount);
             finalSourceAccountId = null;
             finalSourceAmount = null;
-            finalSourceCurrency = null;
-            finalDestAccountId = destAccount.id;
-            finalDestAmount = formattedAmount;
-            finalDestCurrency = destAccount.currency;
+            finalSourceCurrency = finalDestCurrency;
           }
         } else {
-          if (!sourceAccount) {
-            return { success: false, error: "Source account is required for a transfer." };
-          }
-          if (!destAccount) {
+          if (!sourceAccount || !destAccount) {
             return {
               success: false,
-              error: "Destination account or Person is required for a transfer.",
+              error: "Both source and destination accounts are required for an account-to-account transfer.",
             };
           }
           if (data.sourceAccountId === data.destinationAccountId) {
-            return {
-              success: false,
-              error: "Source and destination accounts cannot be the same.",
-            };
+            return { success: false, error: "Source and destination accounts cannot be the same." };
           }
           if (!isPositive(data.sourceAmount)) {
             return { success: false, error: "Transfer amount must be greater than zero." };
           }
           finalSourceAmount = toFixed2(data.sourceAmount);
-          finalDestAmount = data.destinationAmount ? toFixed2(data.destinationAmount) : finalSourceAmount;
+          finalDestAmount = data.destinationAmount
+            ? toFixed2(data.destinationAmount)
+            : finalSourceAmount;
         }
         break;
       }
       case "withdrawal": {
-        if (!sourceAccount || !destAccount) {
-          return { success: false, error: "Source and destination accounts are required." };
+        if (!sourceAccount) {
+          return { success: false, error: "Source bank/card account is required." };
+        }
+        if (!destAccount) {
+          return { success: false, error: "Destination cash account is required." };
+        }
+        if (!isPositive(data.sourceAmount)) {
+          return { success: false, error: "Amount deducted must be greater than zero." };
+        }
+        if (!isPositive(data.destinationAmount)) {
+          return { success: false, error: "Cash received must be greater than zero." };
         }
         finalSourceAmount = toFixed2(data.sourceAmount);
         finalDestAmount = toFixed2(data.destinationAmount);
         break;
       }
       case "deposit": {
-        if (!sourceAccount || !destAccount) {
-          return { success: false, error: "Source and destination accounts are required." };
+        if (!sourceAccount) {
+          return { success: false, error: "Cash account is required as source." };
+        }
+        if (!destAccount) {
+          return { success: false, error: "Destination bank account is required." };
+        }
+        if (!isPositive(data.sourceAmount) || !isPositive(data.destinationAmount)) {
+          return { success: false, error: "Deposit amount must be greater than zero." };
         }
         finalSourceAmount = toFixed2(data.sourceAmount);
         finalDestAmount = toFixed2(data.destinationAmount);
         break;
       }
       case "top_up": {
-        if (!sourceAccount || !destAccount) {
-          return { success: false, error: "Source and destination accounts are required." };
+        if (!sourceAccount) {
+          return { success: false, error: "Funding account is required." };
+        }
+        if (!destAccount) {
+          return { success: false, error: "E-wallet destination is required." };
+        }
+        if (data.sourceAccountId === data.destinationAccountId) {
+          return { success: false, error: "Funding and destination accounts cannot be the same." };
+        }
+        if (!isPositive(data.sourceAmount)) {
+          return { success: false, error: "Top up amount must be greater than zero." };
         }
         finalSourceAmount = toFixed2(data.sourceAmount);
         finalDestAmount = finalSourceAmount;
@@ -430,7 +427,7 @@ export async function updateTransaction(id: string, data: TransactionInput) {
         note: data.note?.trim() || null,
         updatedAt: new Date(),
       })
-      .where(eq(transactions.id, id));
+      .where(and(eq(transactions.id, id), eq(transactions.userId, user.id)));
 
     safeRevalidatePath("/");
     safeRevalidatePath("/accounts");
@@ -448,10 +445,12 @@ export async function updateTransaction(id: string, data: TransactionInput) {
 
 export async function deleteTransaction(id: string) {
   try {
+    const user = await requireAuth();
+
     const existing = await db
       .select()
       .from(transactions)
-      .where(eq(transactions.id, id))
+      .where(and(eq(transactions.id, id), eq(transactions.userId, user.id)))
       .limit(1);
 
     if (existing.length === 0) {
@@ -459,7 +458,9 @@ export async function deleteTransaction(id: string) {
     }
 
     const tx = existing[0];
-    await db.delete(transactions).where(eq(transactions.id, id));
+    await db
+      .delete(transactions)
+      .where(and(eq(transactions.id, id), eq(transactions.userId, user.id)));
 
     safeRevalidatePath("/");
     safeRevalidatePath("/accounts");

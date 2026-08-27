@@ -2,16 +2,20 @@
 
 import { db } from "@/db";
 import { people } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { safeRevalidatePath } from "@/lib/safe-revalidate";
+import { requireAuth } from "@/lib/auth/session";
 
 export async function createPerson(formData: { name: string; note?: string }) {
   try {
+    const user = await requireAuth();
+
     if (!formData.name?.trim()) {
       return { success: false, error: "Person name is required." };
     }
 
     await db.insert(people).values({
+      userId: user.id,
       name: formData.name.trim(),
       note: formData.note?.trim() || null,
       isArchived: false,
@@ -31,6 +35,8 @@ export async function updatePerson(
   formData: { name: string; note?: string }
 ) {
   try {
+    const user = await requireAuth();
+
     if (!formData.name?.trim()) {
       return { success: false, error: "Person name is required." };
     }
@@ -42,7 +48,7 @@ export async function updatePerson(
         note: formData.note?.trim() || null,
         updatedAt: new Date(),
       })
-      .where(eq(people.id, id));
+      .where(and(eq(people.id, id), eq(people.userId, user.id)));
 
     safeRevalidatePath("/people");
     safeRevalidatePath(`/people/${id}`);
@@ -56,13 +62,15 @@ export async function updatePerson(
 
 export async function toggleArchivePerson(id: string, isArchived: boolean) {
   try {
+    const user = await requireAuth();
+
     await db
       .update(people)
       .set({
         isArchived,
         updatedAt: new Date(),
       })
-      .where(eq(people.id, id));
+      .where(and(eq(people.id, id), eq(people.userId, user.id)));
 
     safeRevalidatePath("/people");
     safeRevalidatePath(`/people/${id}`);

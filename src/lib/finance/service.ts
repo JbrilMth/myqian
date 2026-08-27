@@ -8,6 +8,7 @@ import {
 } from "@/db/schema";
 import { eq, and, desc, isNull, sql } from "drizzle-orm";
 import { Decimal, toDecimal, toFixed2 } from "./decimal";
+import { validateSession } from "@/lib/auth/session";
 import type {
   AccountWithBalance,
   CategoryWithChildren,
@@ -18,14 +19,30 @@ import type {
 } from "./types";
 
 /**
- * Calculates current balances for all accounts deterministically:
+ * Helper to get current authenticated user ID, or null
+ */
+async function getCurrentUserId(): Promise<string | null> {
+  const session = await validateSession();
+  return session?.user.id || null;
+}
+
+/**
+ * Calculates current balances for all accounts deterministically for the current user:
  * Balance = initial_balance + sum(destination_amount) - sum(source_amount)
  */
 export async function getAccountsWithBalances(includeArchived = false): Promise<AccountWithBalance[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  const whereConditions = [eq(accounts.userId, userId)];
+  if (!includeArchived) {
+    whereConditions.push(eq(accounts.isArchived, false));
+  }
+
   const allAccounts = await db
     .select()
     .from(accounts)
-    .where(includeArchived ? undefined : eq(accounts.isArchived, false))
+    .where(and(...whereConditions))
     .orderBy(accounts.currency, accounts.name);
 
   if (allAccounts.length === 0) {
@@ -39,7 +56,8 @@ export async function getAccountsWithBalances(includeArchived = false): Promise<
       destinationAccountId: transactions.destinationAccountId,
       destinationAmount: transactions.destinationAmount,
     })
-    .from(transactions);
+    .from(transactions)
+    .where(eq(transactions.userId, userId));
 
   const incomingByAccount = new Map<string, Decimal>();
   const outgoingByAccount = new Map<string, Decimal>();
@@ -72,7 +90,7 @@ export async function getAccountsWithBalances(includeArchived = false): Promise<
       name: acc.name,
       type: acc.type,
       currency: acc.currency,
-      initialBalance: toFixed2(acc.initialBalance),
+      initialBalance: acc.initialBalance,
       currentBalance: toFixed2(current),
       isArchived: acc.isArchived,
       createdAt: acc.createdAt,
@@ -82,138 +100,145 @@ export async function getAccountsWithBalances(includeArchived = false): Promise<
 }
 
 /**
- * Gets a single account with balance and detailed monthly statistics
+ * Gets a single account with current balance, monthly metrics, and transaction history
  */
-export async function getAccountDetails(accountId: string): Promise<{
-  account: AccountWithBalance | null;
-  transactions: any[];
-}> {
-  const accountList = await getAccountsWithBalances(true);
-  const account = accountList.find((a) => a.id === accountId) || null;
+export async function getAccountDetails(accountId: string) {
+  const userId = await getCurrentUserId();
+  if (!userId) return { account: null, transactions: [] };
 
-  if (!account) {
+  const [acc] = await db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
+    .limit(1);
+
+  if (!acc) {
     return { account: null, transactions: [] };
   }
 
-  // Fetch all transactions for this account
-  const accountTx = await db
-    .select({
-      id: transactions.id,
-      type: transactions.type,
-      title: transactions.title,
-      transactionDate: transactions.transactionDate,
-      transactionTime: transactions.transactionTime,
-      sourceAccountId: transactions.sourceAccountId,
-      sourceAmount: transactions.sourceAmount,
-      sourceCurrency: transactions.sourceCurrency,
-      destinationAccountId: transactions.destinationAccountId,
-      destinationAmount: transactions.destinationAmount,
-      destinationCurrency: transactions.destinationCurrency,
-      paymentChannel: transactions.paymentChannel,
-      personId: transactions.personId,
-      personTransferType: transactions.personTransferType,
-      parentCategoryId: transactions.parentCategoryId,
-      childCategoryId: transactions.childCategoryId,
-      note: transactions.note,
-      createdAt: transactions.createdAt,
-      updatedAt: transactions.updatedAt,
-    })
+  // Fetch all transactions involving this account
+  const txs = await db
+    .select()
     .from(transactions)
     .where(
-      sql`${transactions.sourceAccountId} = ${accountId} OR ${transactions.destinationAccountId} = ${accountId}`
+      and(
+        eq(transactions.userId, userId),
+        sql`(${transactions.sourceAccountId} = ${accountId} OR ${transactions.destinationAccountId} = ${accountId})`
+      )
     )
     .orderBy(desc(transactions.transactionDate), desc(transactions.createdAt));
 
-  // Calculate this month's stats for this account
-  const now = new Date();
-  const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // Deterministic current balance calculation
+  let incoming = new Decimal(0);
+  let outgoing = new Decimal(0);
 
-  let income = new Decimal(0);
-  let expenses = new Decimal(0);
-  let withdrawals = new Decimal(0);
-  let deposits = new Decimal(0);
-  let topUps = new Decimal(0);
-  let transfersIn = new Decimal(0);
-  let transfersOut = new Decimal(0);
+  const currentMonthStr = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  const monthlyStats = {
+    income: new Decimal(0),
+    expenses: new Decimal(0),
+    withdrawals: new Decimal(0),
+    deposits: new Decimal(0),
+    topUps: new Decimal(0),
+    transfersIn: new Decimal(0),
+    transfersOut: new Decimal(0),
+  };
 
-  for (const tx of accountTx) {
-    if (!tx.transactionDate.startsWith(currentMonthPrefix)) continue;
+  for (const tx of txs) {
+    const isSource = tx.sourceAccountId === accountId;
+    const isDest = tx.destinationAccountId === accountId;
 
-    if (tx.type === "income" && tx.destinationAccountId === accountId) {
-      income = income.add(toDecimal(tx.destinationAmount));
-    } else if (tx.type === "expense" && tx.sourceAccountId === accountId) {
-      expenses = expenses.add(toDecimal(tx.sourceAmount));
-    } else if (tx.type === "withdrawal" && tx.sourceAccountId === accountId) {
-      withdrawals = withdrawals.add(toDecimal(tx.sourceAmount));
-    } else if (tx.type === "deposit" && tx.destinationAccountId === accountId) {
-      deposits = deposits.add(toDecimal(tx.destinationAmount));
-    } else if (tx.type === "top_up") {
-      if (tx.sourceAccountId === accountId) {
-        topUps = topUps.add(toDecimal(tx.sourceAmount));
-      } else if (tx.destinationAccountId === accountId) {
-        topUps = topUps.add(toDecimal(tx.destinationAmount));
-      }
-    } else if (tx.type === "transfer") {
-      if (tx.destinationAccountId === accountId) {
-        transfersIn = transfersIn.add(toDecimal(tx.destinationAmount));
-      } else if (tx.sourceAccountId === accountId) {
-        transfersOut = transfersOut.add(toDecimal(tx.sourceAmount));
+    if (isDest && tx.destinationAmount) {
+      incoming = incoming.add(toDecimal(tx.destinationAmount));
+    }
+    if (isSource && tx.sourceAmount) {
+      outgoing = outgoing.add(toDecimal(tx.sourceAmount));
+    }
+
+    // Monthly activity metrics
+    if (tx.transactionDate.startsWith(currentMonthStr)) {
+      if (tx.type === "income" && isDest && tx.destinationAmount) {
+        monthlyStats.income = monthlyStats.income.add(toDecimal(tx.destinationAmount));
+      } else if (tx.type === "expense" && isSource && tx.sourceAmount) {
+        monthlyStats.expenses = monthlyStats.expenses.add(toDecimal(tx.sourceAmount));
+      } else if (tx.type === "withdrawal" && isSource && tx.sourceAmount) {
+        monthlyStats.withdrawals = monthlyStats.withdrawals.add(toDecimal(tx.sourceAmount));
+      } else if (tx.type === "deposit" && isDest && tx.destinationAmount) {
+        monthlyStats.deposits = monthlyStats.deposits.add(toDecimal(tx.destinationAmount));
+      } else if (tx.type === "top_up" && isDest && tx.destinationAmount) {
+        monthlyStats.topUps = monthlyStats.topUps.add(toDecimal(tx.destinationAmount));
+      } else if (tx.type === "transfer") {
+        if (isDest && tx.destinationAmount) {
+          monthlyStats.transfersIn = monthlyStats.transfersIn.add(toDecimal(tx.destinationAmount));
+        }
+        if (isSource && tx.sourceAmount) {
+          monthlyStats.transfersOut = monthlyStats.transfersOut.add(toDecimal(tx.sourceAmount));
+        }
       }
     }
   }
 
-  account.monthlyStats = {
-    income: toFixed2(income),
-    expenses: toFixed2(expenses),
-    withdrawals: toFixed2(withdrawals),
-    deposits: toFixed2(deposits),
-    topUps: toFixed2(topUps),
-    transfersIn: toFixed2(transfersIn),
-    transfersOut: toFixed2(transfersOut),
+  const currentBalance = toDecimal(acc.initialBalance).add(incoming).sub(outgoing);
+
+  const accountWithBalance: AccountWithBalance = {
+    id: acc.id,
+    name: acc.name,
+    type: acc.type,
+    currency: acc.currency,
+    initialBalance: acc.initialBalance,
+    currentBalance: toFixed2(currentBalance),
+    isArchived: acc.isArchived,
+    createdAt: acc.createdAt,
+    updatedAt: acc.updatedAt,
+    monthlyStats: {
+      income: toFixed2(monthlyStats.income),
+      expenses: toFixed2(monthlyStats.expenses),
+      withdrawals: toFixed2(monthlyStats.withdrawals),
+      deposits: toFixed2(monthlyStats.deposits),
+      topUps: toFixed2(monthlyStats.topUps),
+      transfersIn: toFixed2(monthlyStats.transfersIn),
+      transfersOut: toFixed2(monthlyStats.transfersOut),
+    },
   };
 
-  return { account, transactions: accountTx };
+  return {
+    account: accountWithBalance,
+    transactions: txs,
+  };
 }
 
 /**
- * Calculates complete dashboard financial data
+ * Calculates Dashboard statistics
  */
 export async function getDashboardData(): Promise<DashboardData> {
-  const accountsList = await getAccountsWithBalances(false);
-
-  // 1. Total money grouped by currency
-  const totalMoneyByCurrency: { [currency: string]: string } = {};
-  for (const acc of accountsList) {
-    const curr = acc.currency.toUpperCase();
-    const currentTotal = toDecimal(totalMoneyByCurrency[curr] || "0");
-    totalMoneyByCurrency[curr] = toFixed2(currentTotal.add(toDecimal(acc.currentBalance)));
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    return {
+      totalMoneyByCurrency: {},
+      exchangeRates: [],
+      accounts: [],
+      thisMonth: { month: new Date().toISOString().slice(0, 7), byCurrency: {} },
+      recentTransactions: [],
+    };
   }
 
-  // 2. This month calculations
-  const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // 1. Total money grouped by currency across active accounts
+  const accountsList = await getAccountsWithBalances(false);
+  const totalMoneyByCurrency: { [currency: string]: string } = {};
 
+  for (const acc of accountsList) {
+    const curr = acc.currency.toUpperCase();
+    const current = totalMoneyByCurrency[curr]
+      ? toDecimal(totalMoneyByCurrency[curr])
+      : new Decimal(0);
+    totalMoneyByCurrency[curr] = toFixed2(current.add(toDecimal(acc.currentBalance)));
+  }
+
+  // 2. This month summary by currency
+  const currentMonthStr = new Date().toISOString().slice(0, 7); // "YYYY-MM"
   const allTx = await db
-    .select({
-      id: transactions.id,
-      type: transactions.type,
-      title: transactions.title,
-      transactionDate: transactions.transactionDate,
-      transactionTime: transactions.transactionTime,
-      sourceAccountId: transactions.sourceAccountId,
-      sourceAmount: transactions.sourceAmount,
-      sourceCurrency: transactions.sourceCurrency,
-      destinationAccountId: transactions.destinationAccountId,
-      destinationAmount: transactions.destinationAmount,
-      destinationCurrency: transactions.destinationCurrency,
-      paymentChannel: transactions.paymentChannel,
-      personId: transactions.personId,
-      personTransferType: transactions.personTransferType,
-      parentCategoryId: transactions.parentCategoryId,
-      childCategoryId: transactions.childCategoryId,
-      createdAt: transactions.createdAt,
-    })
+    .select()
     .from(transactions)
+    .where(eq(transactions.userId, userId))
     .orderBy(desc(transactions.transactionDate), desc(transactions.createdAt));
 
   const monthlyByCurrency: {
@@ -268,9 +293,12 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   // 3. Optional approximate total conversion from exchange rates
   let convertedTotal: DashboardData["convertedTotal"] = undefined;
-  const rates = await db.select().from(exchangeRates);
+  const rates = await db
+    .select()
+    .from(exchangeRates)
+    .where(eq(exchangeRates.userId, userId));
+
   if (rates.length > 0) {
-    // Check if there is rate to CNY or MAD
     const cnyToMad = rates.find((r) => r.fromCurrency === "CNY" && r.toCurrency === "MAD");
     const madToCny = rates.find((r) => r.fromCurrency === "MAD" && r.toCurrency === "CNY");
     if (cnyToMad && totalMoneyByCurrency["CNY"] && totalMoneyByCurrency["MAD"]) {
@@ -313,156 +341,167 @@ export async function getDashboardData(): Promise<DashboardData> {
 }
 
 /**
- * Gets category hierarchy (Parent -> Children) with usage counts
+ * Gets category hierarchy (Parent -> Children) with usage counts for current user
  */
 export async function getCategoriesTree(includeArchived = false): Promise<CategoryWithChildren[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  const whereConditions = [eq(categories.userId, userId)];
+  if (!includeArchived) {
+    whereConditions.push(eq(categories.isArchived, false));
+  }
+
   const allCats = await db
     .select()
     .from(categories)
-    .where(includeArchived ? undefined : eq(categories.isArchived, false))
+    .where(and(...whereConditions))
     .orderBy(categories.name);
 
   const txCounts = await db
     .select({
       parentCategoryId: transactions.parentCategoryId,
       childCategoryId: transactions.childCategoryId,
+      count: sql<number>`count(*)::int`,
     })
-    .from(transactions);
+    .from(transactions)
+    .where(eq(transactions.userId, userId))
+    .groupBy(transactions.parentCategoryId, transactions.childCategoryId);
 
-  const countMap = new Map<string, number>();
-  for (const t of txCounts) {
-    if (t.parentCategoryId) {
-      countMap.set(t.parentCategoryId, (countMap.get(t.parentCategoryId) || 0) + 1);
+  const usageMap = new Map<string, number>();
+  for (const row of txCounts) {
+    if (row.parentCategoryId) {
+      usageMap.set(
+        row.parentCategoryId,
+        (usageMap.get(row.parentCategoryId) || 0) + row.count
+      );
     }
-    if (t.childCategoryId) {
-      countMap.set(t.childCategoryId, (countMap.get(t.childCategoryId) || 0) + 1);
+    if (row.childCategoryId) {
+      usageMap.set(
+        row.childCategoryId,
+        (usageMap.get(row.childCategoryId) || 0) + row.count
+      );
     }
   }
 
-  const parents = allCats.filter((c) => !c.parentId);
-  const children = allCats.filter((c) => c.parentId !== null);
+  const parentMap = new Map<string, CategoryWithChildren>();
+  const rootCategories: CategoryWithChildren[] = [];
 
-  return parents.map((parent) => {
-    const myChildren = children.filter((child) => child.parentId === parent.id);
-    return {
-      id: parent.id,
-      name: parent.name,
-      parentId: null,
-      type: parent.type,
-      isArchived: parent.isArchived,
-      createdAt: parent.createdAt,
-      updatedAt: parent.updatedAt,
-      children: myChildren.map((c) => ({
-        id: c.id,
-        name: c.name,
-        parentId: c.parentId,
-        type: c.type,
-        isArchived: c.isArchived,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        transactionCount: countMap.get(c.id) || 0,
-      })),
-      transactionCount: countMap.get(parent.id) || 0,
-    };
-  });
+  for (const cat of allCats) {
+    if (!cat.parentId) {
+      const parentObj: CategoryWithChildren = {
+        ...cat,
+        children: [],
+        transactionCount: usageMap.get(cat.id) || 0,
+      };
+      parentMap.set(cat.id, parentObj);
+      rootCategories.push(parentObj);
+    }
+  }
+
+  for (const cat of allCats) {
+    if (cat.parentId && parentMap.has(cat.parentId)) {
+      const parent = parentMap.get(cat.parentId)!;
+      parent.children.push({
+        ...cat,
+        transactionCount: usageMap.get(cat.id) || 0,
+      });
+    }
+  }
+
+  return rootCategories;
 }
 
 /**
- * Gets people with detailed debt and repayment ledger breakdown
+ * Gets people with two-way balance summaries for the current user
  */
 export async function getPeopleWithBalances(includeArchived = false): Promise<PersonWithBalance[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  const whereConditions = [eq(people.userId, userId)];
+  if (!includeArchived) {
+    whereConditions.push(eq(people.isArchived, false));
+  }
+
   const allPeople = await db
     .select()
     .from(people)
-    .where(includeArchived ? undefined : eq(people.isArchived, false))
+    .where(and(...whereConditions))
     .orderBy(people.name);
 
-  if (allPeople.length === 0) {
-    return [];
-  }
+  if (allPeople.length === 0) return [];
 
-  const personTx = await db
+  const personTxs = await db
     .select()
     .from(transactions)
-    .where(sql`${transactions.personId} IS NOT NULL`)
+    .where(and(eq(transactions.userId, userId), sql`${transactions.personId} IS NOT NULL`))
     .orderBy(transactions.transactionDate, transactions.createdAt);
 
-  const peopleMap = new Map<
+  const txCountMap = new Map<string, number>();
+  const balancesByPerson = new Map<
     string,
-    {
-      count: number;
-      currencies: Map<string, { theyOweYou: Decimal; youOweThem: Decimal }>;
-    }
+    { [currency: string]: { theyOwe: Decimal; youOwe: Decimal } }
   >();
 
-  for (const p of allPeople) {
-    peopleMap.set(p.id, { count: 0, currencies: new Map() });
-  }
-
-  for (const tx of personTx) {
+  for (const tx of personTxs) {
     if (!tx.personId) continue;
-    const entry = peopleMap.get(tx.personId);
-    if (!entry) continue;
+    txCountMap.set(tx.personId, (txCountMap.get(tx.personId) || 0) + 1);
 
-    entry.count++;
-    const currency = (tx.sourceCurrency || tx.destinationCurrency || "CNY").toUpperCase();
-    if (!entry.currencies.has(currency)) {
-      entry.currencies.set(currency, {
-        theyOweYou: new Decimal(0),
-        youOweThem: new Decimal(0),
-      });
+    const personId = tx.personId;
+    if (!balancesByPerson.has(personId)) {
+      balancesByPerson.set(personId, {});
     }
-    const debt = entry.currencies.get(currency)!;
+    const personCurrencies = balancesByPerson.get(personId)!;
+
+    const curr = (tx.sourceCurrency || tx.destinationCurrency || "CNY").toUpperCase();
+    if (!personCurrencies[curr]) {
+      personCurrencies[curr] = { theyOwe: new Decimal(0), youOwe: new Decimal(0) };
+    }
+
     const amount = toDecimal(tx.sourceAmount || tx.destinationAmount || "0");
+    const pType = tx.personTransferType;
 
-    // Money from me -> them (with return)
-    if (
-      tx.personTransferType === "send_with_return" ||
-      tx.personTransferType === "lend" ||
-      tx.personTransferType === "repay_to_person"
-    ) {
-      if (debt.youOweThem.gt(0)) {
-        if (amount.lte(debt.youOweThem)) {
-          debt.youOweThem = debt.youOweThem.sub(amount);
+    if (pType === "send_with_return" || pType === "lend" || pType === "repay_to_person") {
+      if (personCurrencies[curr].youOwe.gt(0)) {
+        if (amount.lte(personCurrencies[curr].youOwe)) {
+          personCurrencies[curr].youOwe = personCurrencies[curr].youOwe.sub(amount);
         } else {
-          const remaining = amount.sub(debt.youOweThem);
-          debt.youOweThem = new Decimal(0);
-          debt.theyOweYou = debt.theyOweYou.add(remaining);
+          const remainder = amount.sub(personCurrencies[curr].youOwe);
+          personCurrencies[curr].youOwe = new Decimal(0);
+          personCurrencies[curr].theyOwe = personCurrencies[curr].theyOwe.add(remainder);
         }
       } else {
-        debt.theyOweYou = debt.theyOweYou.add(amount);
+        personCurrencies[curr].theyOwe = personCurrencies[curr].theyOwe.add(amount);
       }
-    }
-    // Money from them -> me (with return)
-    else if (
-      tx.personTransferType === "receive_with_return" ||
-      tx.personTransferType === "borrow" ||
-      tx.personTransferType === "repayment_from_person"
+    } else if (
+      pType === "receive_with_return" ||
+      pType === "borrow" ||
+      pType === "repayment_from_person"
     ) {
-      if (debt.theyOweYou.gt(0)) {
-        if (amount.lte(debt.theyOweYou)) {
-          debt.theyOweYou = debt.theyOweYou.sub(amount);
+      if (personCurrencies[curr].theyOwe.gt(0)) {
+        if (amount.lte(personCurrencies[curr].theyOwe)) {
+          personCurrencies[curr].theyOwe = personCurrencies[curr].theyOwe.sub(amount);
         } else {
-          const remaining = amount.sub(debt.theyOweYou);
-          debt.theyOweYou = new Decimal(0);
-          debt.youOweThem = debt.youOweThem.add(remaining);
+          const remainder = amount.sub(personCurrencies[curr].theyOwe);
+          personCurrencies[curr].theyOwe = new Decimal(0);
+          personCurrencies[curr].youOwe = personCurrencies[curr].youOwe.add(remainder);
         }
       } else {
-        debt.youOweThem = debt.youOweThem.add(amount);
+        personCurrencies[curr].youOwe = personCurrencies[curr].youOwe.add(amount);
       }
     }
-    // "send_without_return" and "receive_without_return" do not alter debts
   }
 
   return allPeople.map((p) => {
-    const data = peopleMap.get(p.id)!;
-    const balancesByCurrency: PersonWithBalance["balancesByCurrency"] = {};
+    const rawCurrencies = balancesByPerson.get(p.id) || {};
+    const formattedBalances: PersonWithBalance["balancesByCurrency"] = {};
 
-    for (const [curr, d] of data.currencies.entries()) {
-      const net = d.theyOweYou.sub(d.youOweThem);
-      balancesByCurrency[curr] = {
-        theyOweYou: toFixed2(d.theyOweYou),
-        youOweThem: toFixed2(d.youOweThem),
+    for (const [curr, b] of Object.entries(rawCurrencies)) {
+      const net = b.theyOwe.sub(b.youOwe);
+      formattedBalances[curr] = {
+        theyOweYou: toFixed2(b.theyOwe),
+        youOweThem: toFixed2(b.youOwe),
         netPosition: toFixed2(net),
       };
     }
@@ -474,8 +513,103 @@ export async function getPeopleWithBalances(includeArchived = false): Promise<Pe
       isArchived: p.isArchived,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
-      balancesByCurrency,
-      transactionCount: data.count,
+      balancesByCurrency: formattedBalances,
+      transactionCount: txCountMap.get(p.id) || 0,
     };
   });
+}
+
+/**
+ * Gets details and transaction history for a specific person for current user
+ */
+export async function getPersonDetails(personId: string) {
+  const userId = await getCurrentUserId();
+  if (!userId) return { person: null, transactions: [] };
+
+  const peopleList = await getPeopleWithBalances(true);
+  const person = peopleList.find((p) => p.id === personId);
+
+  if (!person) {
+    return { person: null, transactions: [] };
+  }
+
+  const txs = await db
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.personId, personId), eq(transactions.userId, userId)))
+    .orderBy(desc(transactions.transactionDate), desc(transactions.createdAt));
+
+  return {
+    person,
+    transactions: txs,
+  };
+}
+
+/**
+ * Gets transaction list with optional filtering for current user
+ */
+export async function getTransactionsList(filters?: {
+  type?: TransactionType;
+  accountId?: string;
+  categoryId?: string;
+  personId?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const userId = await getCurrentUserId();
+  if (!userId) return { transactions: [], total: 0 };
+
+  const conditions = [eq(transactions.userId, userId)];
+
+  if (filters?.type) {
+    conditions.push(eq(transactions.type, filters.type));
+  }
+  if (filters?.accountId) {
+    conditions.push(
+      sql`(${transactions.sourceAccountId} = ${filters.accountId} OR ${transactions.destinationAccountId} = ${filters.accountId})`
+    );
+  }
+  if (filters?.categoryId) {
+    conditions.push(
+      sql`(${transactions.parentCategoryId} = ${filters.categoryId} OR ${transactions.childCategoryId} = ${filters.categoryId})`
+    );
+  }
+  if (filters?.personId) {
+    conditions.push(eq(transactions.personId, filters.personId));
+  }
+  if (filters?.startDate) {
+    conditions.push(sql`${transactions.transactionDate} >= ${filters.startDate}`);
+  }
+  if (filters?.endDate) {
+    conditions.push(sql`${transactions.transactionDate} <= ${filters.endDate}`);
+  }
+
+  const txs = await db
+    .select()
+    .from(transactions)
+    .where(and(...conditions))
+    .orderBy(desc(transactions.transactionDate), desc(transactions.createdAt))
+    .limit(filters?.limit || 100)
+    .offset(filters?.offset || 0);
+
+  return {
+    transactions: txs,
+    total: txs.length,
+  };
+}
+
+/**
+ * Gets exchange rates for current user
+ */
+export async function getExchangeRates() {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  return db
+    .select()
+    .from(exchangeRates)
+    .where(eq(exchangeRates.userId, userId))
+    .orderBy(exchangeRates.fromCurrency);
 }

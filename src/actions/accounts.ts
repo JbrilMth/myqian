@@ -2,9 +2,10 @@
 
 import { db } from "@/db";
 import { accounts } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { safeRevalidatePath } from "@/lib/safe-revalidate";
 import { toFixed2, isNonNegative } from "@/lib/finance/decimal";
+import { requireAuth } from "@/lib/auth/session";
 
 export async function createAccount(formData: {
   name: string;
@@ -13,6 +14,8 @@ export async function createAccount(formData: {
   initialBalance: string;
 }) {
   try {
+    const user = await requireAuth();
+
     if (!formData.name?.trim()) {
       return { success: false, error: "Account name is required." };
     }
@@ -26,6 +29,7 @@ export async function createAccount(formData: {
     const initial = toFixed2(formData.initialBalance || "0.00");
 
     await db.insert(accounts).values({
+      userId: user.id,
       name: formData.name.trim(),
       type: formData.type || "bank",
       currency: formData.currency.trim().toUpperCase(),
@@ -52,6 +56,8 @@ export async function updateAccount(
   }
 ) {
   try {
+    const user = await requireAuth();
+
     if (!formData.name?.trim()) {
       return { success: false, error: "Account name is required." };
     }
@@ -67,7 +73,7 @@ export async function updateAccount(
         initialBalance: toFixed2(formData.initialBalance),
         updatedAt: new Date(),
       })
-      .where(eq(accounts.id, id));
+      .where(and(eq(accounts.id, id), eq(accounts.userId, user.id)));
 
     safeRevalidatePath("/");
     safeRevalidatePath("/accounts");
@@ -82,13 +88,15 @@ export async function updateAccount(
 
 export async function toggleArchiveAccount(id: string, isArchived: boolean) {
   try {
+    const user = await requireAuth();
+
     await db
       .update(accounts)
       .set({
         isArchived,
         updatedAt: new Date(),
       })
-      .where(eq(accounts.id, id));
+      .where(and(eq(accounts.id, id), eq(accounts.userId, user.id)));
 
     safeRevalidatePath("/");
     safeRevalidatePath("/accounts");
