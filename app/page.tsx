@@ -1,17 +1,17 @@
 import React from "react";
 import Link from "next/link";
-import { getDashboardData } from "@/lib/finance/service";
+import {
+  getDashboardData,
+  getCategoriesTree,
+  getPeopleWithBalances,
+} from "@/lib/finance/service";
 import { formatCurrency } from "@/lib/finance/decimal";
 import { getAccountIdentity } from "@/lib/finance/account-identities";
 import { TotalMoneySection } from "@/components/dashboard/TotalMoneySection";
-import { MetricCard } from "@/components/ui/MetricCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TransactionTable } from "@/components/transactions/TransactionTable";
 import {
   Wallet,
-  ArrowDownLeft,
-  ArrowUpRight,
-  ArrowLeftRight,
   CreditCard,
   Plus,
   ArrowUpRight as ExternalIcon,
@@ -21,12 +21,26 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const data = await getDashboardData();
+  const [data, categories, people] = await Promise.all([
+    getDashboardData(),
+    getCategoriesTree(true),
+    getPeopleWithBalances(true),
+  ]);
 
   // Map lookups for transaction table
   const accountsMap = new Map(
     data.accounts.map((a) => [a.id, { name: a.name, currency: a.currency, type: a.type }])
   );
+
+  const categoriesMap = new Map<string, string>();
+  for (const parent of categories) {
+    categoriesMap.set(parent.id, parent.name);
+    for (const child of parent.children) {
+      categoriesMap.set(child.id, child.name);
+    }
+  }
+
+  const peopleMap = new Map(people.map((p) => [p.id, p.name]));
 
   return (
     <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-200">
@@ -37,7 +51,7 @@ export default async function DashboardPage() {
             Dashboard
           </h1>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Real-time financial status, balances, and monthly summary.
+            Real-time financial status, balances, and ledger summary.
           </p>
         </div>
 
@@ -132,44 +146,6 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* THIS MONTH SUMMARY */}
-      <section className="space-y-3">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          This Month Activity ({data.thisMonth.month})
-        </h2>
-
-        {Object.keys(data.thisMonth.byCurrency).length === 0 ? (
-          <div className="p-6 text-center text-xs text-zinc-500 border border-zinc-200/80 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900/30">
-            No transactions recorded this month yet.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            {Object.entries(data.thisMonth.byCurrency).map(([curr, stats]) => (
-              <React.Fragment key={curr}>
-                <MetricCard
-                  label={`${curr} Income`}
-                  value={formatCurrency(stats.income, curr)}
-                  subValue="Total earnings received"
-                  icon={<ArrowDownLeft className="w-4 h-4 text-emerald-500" />}
-                />
-                <MetricCard
-                  label={`${curr} Expenses`}
-                  value={formatCurrency(stats.expenses, curr)}
-                  subValue="Total expenditures spent"
-                  icon={<ArrowUpRight className="w-4 h-4 text-red-500" />}
-                />
-                <MetricCard
-                  label={`${curr} Transfers`}
-                  value={formatCurrency(stats.transfers, curr)}
-                  subValue="Money moved across accounts/people"
-                  icon={<ArrowLeftRight className="w-4 h-4 text-blue-500" />}
-                />
-              </React.Fragment>
-            ))}
-          </div>
-        )}
-      </section>
-
       {/* RECENT TRANSACTIONS */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
@@ -189,6 +165,8 @@ export default async function DashboardPage() {
         <TransactionTable
           transactions={data.recentTransactions}
           accountsMap={accountsMap}
+          categoriesMap={categoriesMap}
+          peopleMap={peopleMap}
         />
       </section>
     </div>

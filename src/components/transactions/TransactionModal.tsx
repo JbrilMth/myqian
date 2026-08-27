@@ -20,6 +20,7 @@ import { formatCurrency } from "@/lib/finance/decimal";
 import { getAccountIdentity } from "@/lib/finance/account-identities";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Users, Building2, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { CategorySelector } from "@/components/categories/CategorySelector";
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -42,6 +43,12 @@ export function TransactionModal({
   initialValues,
   onSuccess,
 }: TransactionModalProps) {
+  const [currentCategories, setCurrentCategories] = useState<CategoryWithChildren[]>(categories);
+
+  useEffect(() => {
+    setCurrentCategories(categories);
+  }, [categories]);
+
   const [type, setType] = useState<TransactionType>("expense");
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
@@ -1084,52 +1091,16 @@ export function TransactionModal({
 
         {/* CATEGORY SELECTOR */}
         {(type === "expense" || type === "income" || type === "transfer") && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Parent Category
-              </label>
-              <select
-                value={parentCategoryId}
-                onChange={(e) => {
-                  setParentCategoryId(e.target.value);
-                  setChildCategoryId("");
-                }}
-                className="w-full px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-xs font-medium"
-              >
-                <option value="">Select parent category...</option>
-                {categories.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Child Category
-              </label>
-              <select
-                value={childCategoryId}
-                onChange={(e) => setChildCategoryId(e.target.value)}
-                disabled={!parentCategoryId || childOptions.length === 0}
-                className="w-full px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-xs font-medium disabled:opacity-50"
-              >
-                <option value="">
-                  {parentCategoryId
-                    ? childOptions.length === 0
-                      ? "No child categories"
-                      : "Select child category..."
-                    : "Choose parent first"}
-                </option>
-                {childOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <CategorySelector
+            parentCategoryId={parentCategoryId}
+            childCategoryId={childCategoryId}
+            categories={currentCategories}
+            onChange={(pId, cId) => {
+              setParentCategoryId(pId);
+              setChildCategoryId(cId);
+            }}
+            onCategoriesChange={(updated) => setCurrentCategories(updated)}
+          />
         )}
 
         {/* DATE & TIME */}

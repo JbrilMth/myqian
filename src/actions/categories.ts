@@ -18,17 +18,21 @@ export async function createCategory(formData: {
       return { success: false, error: "Category name is required." };
     }
 
-    await db.insert(categories).values({
-      userId: user.id,
-      name: formData.name.trim(),
-      parentId: formData.parentId || null,
-      type: formData.type || "both",
-      isArchived: false,
-    });
+    const [newCategory] = await db
+      .insert(categories)
+      .values({
+        userId: user.id,
+        name: formData.name.trim(),
+        parentId: formData.parentId || null,
+        type: formData.type || "both",
+        isArchived: false,
+      })
+      .returning();
 
+    safeRevalidatePath("/");
     safeRevalidatePath("/categories");
     safeRevalidatePath("/transactions");
-    return { success: true };
+    return { success: true, category: newCategory };
   } catch (err: any) {
     console.error("Failed to create category:", err);
     return { success: false, error: err.message || "Failed to create category" };

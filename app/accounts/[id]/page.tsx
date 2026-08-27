@@ -1,7 +1,12 @@
 import React from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getAccountDetails } from "@/lib/finance/service";
+import {
+  getAccountDetails,
+  getAccountsWithBalances,
+  getCategoriesTree,
+  getPeopleWithBalances,
+} from "@/lib/finance/service";
 import { formatCurrency } from "@/lib/finance/decimal";
 import { getAccountIdentity } from "@/lib/finance/account-identities";
 import { MetricCard } from "@/components/ui/MetricCard";
@@ -23,7 +28,12 @@ interface AccountDetailPageProps {
 
 export default async function AccountDetailPage({ params }: AccountDetailPageProps) {
   const { id } = await params;
-  const { account, transactions } = await getAccountDetails(id);
+  const [{ account, transactions }, allAccounts, categories, people] = await Promise.all([
+    getAccountDetails(id),
+    getAccountsWithBalances(true),
+    getCategoriesTree(true),
+    getPeopleWithBalances(true),
+  ]);
 
   if (!account) {
     notFound();
@@ -31,7 +41,19 @@ export default async function AccountDetailPage({ params }: AccountDetailPagePro
 
   const identity = getAccountIdentity(account.name, account.type);
   const stats = account.monthlyStats;
-  const accountsMap = new Map([[account.id, { name: account.name, currency: account.currency, type: account.type }]]);
+  const accountsMap = new Map(
+    allAccounts.map((a) => [a.id, { name: a.name, currency: a.currency, type: a.type }])
+  );
+
+  const categoriesMap = new Map<string, string>();
+  for (const parent of categories) {
+    categoriesMap.set(parent.id, parent.name);
+    for (const child of parent.children) {
+      categoriesMap.set(child.id, child.name);
+    }
+  }
+
+  const peopleMap = new Map(people.map((p) => [p.id, p.name]));
 
   return (
     <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-200">
@@ -127,6 +149,8 @@ export default async function AccountDetailPage({ params }: AccountDetailPagePro
         <TransactionTable
           transactions={transactions}
           accountsMap={accountsMap}
+          categoriesMap={categoriesMap}
+          peopleMap={peopleMap}
         />
       </section>
     </div>

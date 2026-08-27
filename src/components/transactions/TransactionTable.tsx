@@ -198,23 +198,30 @@ export function TransactionTable({
                 </div>
               </div>
 
-              {/* Title & Category */}
-              <div>
-                <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                  {tx.title}
-                </h4>
-                {parentCat && (
-                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    {parentCat}
-                    {childCat && <span> › {childCat}</span>}
-                  </div>
-                )}
-                {tx.note && (
-                  <p className="text-[10px] text-zinc-400 mt-0.5 italic">
-                    {tx.note}
-                  </p>
-                )}
-              </div>
+                {/* Title & Category */}
+                <div>
+                  <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                    {tx.title}
+                  </h4>
+                  {(parentCat || childCat) && (
+                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 flex items-center gap-1 flex-wrap">
+                      {parentCat && (
+                        <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                          {parentCat}
+                        </span>
+                      )}
+                      {parentCat && childCat && (
+                        <span className="text-zinc-400 font-medium">&gt;</span>
+                      )}
+                      {childCat && <span>{childCat}</span>}
+                    </div>
+                  )}
+                  {tx.note && (
+                    <p className="text-[10px] text-zinc-400 mt-0.5 italic">
+                      {tx.note}
+                    </p>
+                  )}
+                </div>
 
               {/* Bottom Row: Account Movement & Action Buttons */}
               <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400">
@@ -349,11 +356,20 @@ export function TransactionTable({
 
                   {/* Category */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {parentCat ? (
-                      <div className="text-zinc-700 dark:text-zinc-300">
-                        <span>{parentCat}</span>
+                    {parentCat || childCat ? (
+                      <div className="text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                        {parentCat && (
+                          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                            {parentCat}
+                          </span>
+                        )}
+                        {parentCat && childCat && (
+                          <span className="text-zinc-400 font-medium">&gt;</span>
+                        )}
                         {childCat && (
-                          <span className="text-zinc-400"> › {childCat}</span>
+                          <span className="text-zinc-600 dark:text-zinc-400">
+                            {childCat}
+                          </span>
                         )}
                       </div>
                     ) : (

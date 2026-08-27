@@ -48,6 +48,12 @@ export function AppShell({
   categories,
   people,
 }: AppShellProps) {
+  const [shellCategories, setShellCategories] = useState<CategoryWithChildren[]>(categories);
+
+  React.useEffect(() => {
+    setShellCategories(categories);
+  }, [categories]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<any | null>(null);
   const [initialValues, setInitialValues] = useState<TransactionInitialValues | null>(null);
@@ -85,7 +91,7 @@ export function AppShell({
           isOpen={isModalOpen}
           onClose={handleClose}
           accounts={accounts}
-          categories={categories}
+          categories={shellCategories}
           people={people}
           editTransaction={editingTransaction}
           initialValues={initialValues}
