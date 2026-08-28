@@ -8,7 +8,7 @@ import {
 } from "@/db/schema";
 import { eq, and, desc, isNull, sql } from "drizzle-orm";
 import { Decimal, toDecimal, toFixed2 } from "./decimal";
-import { validateSession } from "@/lib/auth/session";
+import { validateSession, isAppLocked } from "@/lib/auth/session";
 import type {
   AccountWithBalance,
   CategoryWithChildren,
@@ -19,9 +19,12 @@ import type {
 } from "./types";
 
 /**
- * Helper to get current authenticated user ID, or null
+ * Helper to get current authenticated user ID if session is active and unlocked, or null
  */
 async function getCurrentUserId(): Promise<string | null> {
+  const locked = await isAppLocked();
+  if (locked) return null;
+
   const session = await validateSession();
   return session?.user.id || null;
 }

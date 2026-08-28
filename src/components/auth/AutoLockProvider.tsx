@@ -1,8 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { startAuthentication } from "@simplewebauthn/browser";
-import { startPasskeyAuth, finishPasskeyAuth, loginWithPassword } from "@/actions/auth";
+import {
+  startPasskeyAuth,
+  finishPasskeyAuth,
+  unlockWithPassword,
+  lockApp,
+  updateLastActive,
+} from "@/actions/auth";
 import { Lock, Scan, ArrowRight, Loader2 } from "lucide-react";
 
 interface AutoLockContextType {
@@ -26,6 +33,7 @@ interface AutoLockProviderProps {
   userEmail: string;
   hasPasskeys: boolean;
   autoLockTimeout: string; // 'immediately' | '1m' | '5m' | 'never'
+  initialLocked?: boolean;
 }
 
 export function AutoLockProvider({
@@ -33,12 +41,32 @@ export function AutoLockProvider({
   userEmail,
   hasPasskeys,
   autoLockTimeout,
+  initialLocked = false,
 }: AutoLockProviderProps) {
-  const [isLocked, setIsLocked] = useState(false);
+  const router = useRouter();
+  const [isLocked, setIsLocked] = useState(initialLocked);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
+
+  // Sync state if server prop changes
+  useEffect(() => {
+    if (initialLocked !== undefined) {
+      setIsLocked(initialLocked);
+    }
+  }, [initialLocked]);
+
+  const triggerLock = useCallback(async () => {
+    setIsLocked(true);
+    try {
+      // Synchronously set cookie in client jar for immediate refresh resilience
+      document.cookie = "myqian_locked=1; path=/; max-age=2592000; SameSite=Lax";
+      await lockApp();
+    } catch (err) {
+      console.error("Failed to set lock:", err);
+    }
+  }, []);
 
   const getTimeoutMs = useCallback(() => {
     switch (autoLockTimeout) {
@@ -56,18 +84,28 @@ export function AutoLockProvider({
 
   // Inactivity and Visibility tracking
   useEffect(() => {
+    if (isLocked) return;
+
     const timeoutMs = getTimeoutMs();
     if (timeoutMs === null) return;
 
     let timer: NodeJS.Timeout | null = null;
     let lastActive = Date.now();
+    let lastHeartbeat = Date.now();
 
     const resetTimer = () => {
       lastActive = Date.now();
       if (timer) clearTimeout(timer);
+
+      // Periodically update last active timestamp on server (throttled to 30s)
+      if (Date.now() - lastHeartbeat > 30000) {
+        lastHeartbeat = Date.now();
+        updateLastActive().catch(() => {});
+      }
+
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
-          setIsLocked(true);
+          triggerLock();
         }, timeoutMs);
       }
     };
@@ -75,12 +113,14 @@ export function AutoLockProvider({
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         if (timeoutMs === 0) {
-          setIsLocked(true);
+          triggerLock();
         }
       } else if (document.visibilityState === "visible") {
         const elapsed = Date.now() - lastActive;
         if (timeoutMs === 0 || elapsed >= timeoutMs) {
-          setIsLocked(true);
+          triggerLock();
+        } else {
+          resetTimer();
         }
       }
     };
@@ -96,7 +136,7 @@ export function AutoLockProvider({
       activityEvents.forEach((ev) => window.removeEventListener(ev, resetTimer));
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [autoLockTimeout, getTimeoutMs]);
+  }, [autoLockTimeout, getTimeoutMs, isLocked, triggerLock]);
 
   const handleUnlockWithPasskey = async () => {
     setError(null);
@@ -132,8 +172,11 @@ export function AutoLockProvider({
         return;
       }
 
+      // Clear client cookie and restore access
+      document.cookie = "myqian_locked=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       setIsLocked(false);
       setError(null);
+      router.refresh();
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred.");
     } finally {
@@ -147,15 +190,18 @@ export function AutoLockProvider({
     setIsUnlocking(true);
 
     try {
-      const res = await loginWithPassword(userEmail, password);
+      const res = await unlockWithPassword(password);
       if (!res.success) {
         setError(res.error || "Incorrect password.");
         return;
       }
 
+      // Clear client cookie and restore access
+      document.cookie = "myqian_locked=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       setIsLocked(false);
       setPassword("");
       setError(null);
+      router.refresh();
     } catch (err: any) {
       setError(err.message || "Failed to unlock.");
     } finally {
@@ -167,8 +213,12 @@ export function AutoLockProvider({
     <AutoLockContext.Provider
       value={{
         isLocked,
-        lockNow: () => setIsLocked(true),
-        unlock: () => setIsLocked(false),
+        lockNow: triggerLock,
+        unlock: () => {
+          document.cookie = "myqian_locked=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          setIsLocked(false);
+          router.refresh();
+        },
       }}
     >
       {children}

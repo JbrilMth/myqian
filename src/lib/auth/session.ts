@@ -5,6 +5,8 @@ import { users, sessions } from "@/db/schema";
 import { eq, and, gt } from "drizzle-orm";
 
 const SESSION_COOKIE_NAME = "myqian_session";
+const LOCK_COOKIE_NAME = "myqian_locked";
+const LAST_ACTIVE_COOKIE_NAME = "myqian_last_active";
 const SESSION_DURATION_DAYS = 30;
 
 export interface AuthUser {
@@ -50,6 +52,16 @@ export async function createSession(userId: string): Promise<string> {
     secure: process.env.NODE_ENV === "production",
     expires: expiresAt,
     path: "/",
+  });
+
+  // Clear any existing lock state and record activity timestamp
+  cookieStore.delete(LOCK_COOKIE_NAME);
+  cookieStore.set(LAST_ACTIVE_COOKIE_NAME, Date.now().toString(), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
   });
 
   return token;
@@ -98,7 +110,110 @@ export async function validateSession(): Promise<{ user: AuthUser } | null> {
 }
 
 /**
- * Destroys the current session and clears the cookie
+ * Sets the application lock cookie on the server
+ */
+export async function setAppLockedCookie(): Promise<void> {
+  try {
+    const cookieStore = await cookies();
+    cookieStore.set(LOCK_COOKIE_NAME, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
+    });
+  } catch (error) {
+    console.error("Set lock cookie error:", error);
+  }
+}
+
+/**
+ * Clears the application lock cookie on the server and updates last active timestamp
+ */
+export async function clearAppLockedCookie(): Promise<void> {
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete(LOCK_COOKIE_NAME);
+    cookieStore.set(LAST_ACTIVE_COOKIE_NAME, Date.now().toString(), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
+    });
+  } catch (error) {
+    console.error("Clear lock cookie error:", error);
+  }
+}
+
+/**
+ * Updates last active timestamp if app is not locked
+ */
+export async function updateLastActiveCookie(): Promise<void> {
+  try {
+    const cookieStore = await cookies();
+    if (cookieStore.get(LOCK_COOKIE_NAME)?.value !== "1") {
+      cookieStore.set(LAST_ACTIVE_COOKIE_NAME, Date.now().toString(), {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
+      });
+    }
+  } catch (error) {
+    console.error("Update last active error:", error);
+  }
+}
+
+/**
+ * Verifies server-side whether the application is currently locked
+ */
+export async function isAppLocked(): Promise<boolean> {
+  try {
+    const cookieStore = await cookies();
+
+    // 1. Explicit lock cookie check
+    if (cookieStore.get(LOCK_COOKIE_NAME)?.value === "1") {
+      return true;
+    }
+
+    // 2. Validate session and check inactivity timeout
+    const session = await validateSession();
+    if (!session) return false;
+
+    const timeout = session.user.autoLockTimeout;
+    if (!timeout || timeout === "never") return false;
+
+    const lastActiveStr = cookieStore.get(LAST_ACTIVE_COOKIE_NAME)?.value;
+    if (!lastActiveStr) {
+      // If user has a timeout set but no last_active timestamp exists, lock for safety
+      return timeout === "immediately";
+    }
+
+    const lastActive = parseInt(lastActiveStr, 10);
+    if (isNaN(lastActive)) return false;
+
+    const elapsed = Date.now() - lastActive;
+    if (timeout === "immediately" && elapsed > 2000) {
+      return true;
+    }
+    if (timeout === "1m" && elapsed >= 60 * 1000) {
+      return true;
+    }
+    if (timeout === "5m" && elapsed >= 5 * 60 * 1000) {
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("isAppLocked error:", error);
+    return false;
+  }
+}
+
+/**
+ * Destroys the current session and clears all session & lock cookies
  */
 export async function destroySession(): Promise<void> {
   try {
@@ -111,15 +226,22 @@ export async function destroySession(): Promise<void> {
     }
 
     cookieStore.delete(SESSION_COOKIE_NAME);
+    cookieStore.delete(LOCK_COOKIE_NAME);
+    cookieStore.delete(LAST_ACTIVE_COOKIE_NAME);
   } catch (error) {
     console.error("Destroy session error:", error);
   }
 }
 
 /**
- * Helper to require authentication on server routes/actions
+ * Helper to require authentication and unlocked state on server routes/actions
  */
 export async function requireAuth(): Promise<AuthUser> {
+  const locked = await isAppLocked();
+  if (locked) {
+    throw new Error("Application is locked. Please authenticate.");
+  }
+
   const session = await validateSession();
   if (!session) {
     throw new Error("Unauthorized: Please sign in.");

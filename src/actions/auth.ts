@@ -19,6 +19,10 @@ import {
   validateSession,
   requireAuth,
   hasAnyRegisteredUser,
+  setAppLockedCookie,
+  clearAppLockedCookie,
+  updateLastActiveCookie,
+  isAppLocked,
 } from "@/lib/auth/session";
 import {
   createPasskeyRegistrationOptions,
@@ -141,6 +145,8 @@ export async function loginWithPassword(
     await claimOrphanDataForUser(user.id);
 
     await createSession(user.id);
+    await clearAppLockedCookie();
+    revalidatePath("/", "layout");
 
     return { success: true };
   } catch (err: any) {
@@ -158,6 +164,71 @@ export async function logout(): Promise<ActionResult> {
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || "Failed to log out." };
+  }
+}
+
+/**
+ * Explicitly locks the application session
+ */
+export async function lockApp(): Promise<ActionResult> {
+  try {
+    await setAppLockedCookie();
+    revalidatePath("/", "layout");
+    return { success: true };
+  } catch (err: any) {
+    console.error("Lock app error:", err);
+    return { success: false, error: err.message || "Failed to lock application." };
+  }
+}
+
+/**
+ * Unlocks the application session with master password
+ */
+export async function unlockWithPassword(passwordInput: string): Promise<ActionResult> {
+  try {
+    const session = await validateSession();
+    if (!session) {
+      return { success: false, error: "No active session found. Please sign in." };
+    }
+
+    const password = passwordInput?.trim();
+    if (!password) {
+      return { success: false, error: "Password is required." };
+    }
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+
+    if (!user) {
+      return { success: false, error: "User account not found." };
+    }
+
+    const isValid = await verifyPassword(password, user.passwordHash);
+    if (!isValid) {
+      return { success: false, error: "Incorrect master password." };
+    }
+
+    await clearAppLockedCookie();
+    revalidatePath("/", "layout");
+    return { success: true };
+  } catch (err: any) {
+    console.error("Unlock error:", err);
+    return { success: false, error: err.message || "Failed to unlock application." };
+  }
+}
+
+/**
+ * Updates last active timestamp if app is unlocked
+ */
+export async function updateLastActive(): Promise<ActionResult> {
+  try {
+    await updateLastActiveCookie();
+    return { success: true };
+  } catch {
+    return { success: false };
   }
 }
 
@@ -180,24 +251,38 @@ export async function getUserSecurityStatus(): Promise<{
   hasPasskey: boolean;
   autoLockTimeout: string;
   email: string;
+  isLocked: boolean;
 }> {
   try {
-    const user = await requireAuth();
+    const session = await validateSession();
+    if (!session) {
+      return {
+        hasPasskey: false,
+        autoLockTimeout: "never",
+        email: "",
+        isLocked: false,
+      };
+    }
+    const user = session.user;
     const userPasskeys = await db
       .select({ id: passkeyCredentials.id })
       .from(passkeyCredentials)
       .where(eq(passkeyCredentials.userId, user.id));
 
+    const locked = await isAppLocked();
+
     return {
       hasPasskey: userPasskeys.length > 0,
       autoLockTimeout: user.autoLockTimeout,
       email: user.email,
+      isLocked: locked,
     };
   } catch {
     return {
       hasPasskey: false,
       autoLockTimeout: "never",
       email: "",
+      isLocked: false,
     };
   }
 }
@@ -279,6 +364,8 @@ export async function finishPasskeyAuth(
 
     await claimOrphanDataForUser(result.userId);
     await createSession(result.userId);
+    await clearAppLockedCookie();
+    revalidatePath("/", "layout");
 
     return { success: true };
   } catch (err: any) {
