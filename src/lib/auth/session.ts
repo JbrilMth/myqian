@@ -173,7 +173,7 @@ export async function isAppLocked(): Promise<boolean> {
   try {
     const cookieStore = await cookies();
 
-    // 1. Explicit lock cookie check
+    // 1. Explicit lock cookie check (set when locked immediately or on timeout)
     if (cookieStore.get(LOCK_COOKIE_NAME)?.value === "1") {
       return true;
     }
@@ -183,21 +183,21 @@ export async function isAppLocked(): Promise<boolean> {
     if (!session) return false;
 
     const timeout = session.user.autoLockTimeout;
-    if (!timeout || timeout === "never") return false;
-
-    const lastActiveStr = cookieStore.get(LAST_ACTIVE_COOKIE_NAME)?.value;
-    if (!lastActiveStr) {
-      // If user has a timeout set but no last_active timestamp exists, lock for safety
-      return timeout === "immediately";
+    if (!timeout || timeout === "never" || timeout === "immediately") {
+      // For "never" and "immediately", locking is event-driven:
+      // "immediately" triggers when the user leaves/backgrounds the app, which explicitly sets myqian_locked=1.
+      // Active browsing in the foreground should never be locked by elapsed server time.
+      return false;
     }
+
+    // 3. For timed modes ("1m", "5m"), check if elapsed time since last activity exceeds the timeout
+    const lastActiveStr = cookieStore.get(LAST_ACTIVE_COOKIE_NAME)?.value;
+    if (!lastActiveStr) return false;
 
     const lastActive = parseInt(lastActiveStr, 10);
     if (isNaN(lastActive)) return false;
 
     const elapsed = Date.now() - lastActive;
-    if (timeout === "immediately" && elapsed > 2000) {
-      return true;
-    }
     if (timeout === "1m" && elapsed >= 60 * 1000) {
       return true;
     }

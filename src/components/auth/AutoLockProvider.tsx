@@ -50,15 +50,26 @@ export function AutoLockProvider({
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
 
+  // Refs to avoid stale closures in listeners
+  const lastActiveRef = React.useRef<number>(Date.now());
+  const isLockedRef = React.useRef<boolean>(isLocked);
+
+  useEffect(() => {
+    isLockedRef.current = isLocked;
+  }, [isLocked]);
+
   // Sync state if server prop changes
   useEffect(() => {
     if (initialLocked !== undefined) {
       setIsLocked(initialLocked);
+      isLockedRef.current = initialLocked;
     }
   }, [initialLocked]);
 
   const triggerLock = useCallback(async () => {
+    if (isLockedRef.current) return;
     setIsLocked(true);
+    isLockedRef.current = true;
     try {
       // Synchronously set cookie in client jar for immediate refresh resilience
       document.cookie = "myqian_locked=1; path=/; max-age=2592000; SameSite=Lax";
@@ -87,54 +98,76 @@ export function AutoLockProvider({
     if (isLocked) return;
 
     const timeoutMs = getTimeoutMs();
-    if (timeoutMs === null) return;
-
     let timer: NodeJS.Timeout | null = null;
-    let lastActive = Date.now();
-    let lastHeartbeat = Date.now();
+    let lastCookieSync = Date.now();
 
-    const resetTimer = () => {
-      lastActive = Date.now();
+    lastActiveRef.current = Date.now();
+
+    const startOrResetTimer = (durationMs: number) => {
       if (timer) clearTimeout(timer);
+      if (durationMs > 0) {
+        timer = setTimeout(() => {
+          triggerLock();
+        }, durationMs);
+      }
+    };
 
-      // Periodically update last active timestamp on server (throttled to 30s)
-      if (Date.now() - lastHeartbeat > 30000) {
-        lastHeartbeat = Date.now();
+    const handleUserActivity = () => {
+      lastActiveRef.current = Date.now();
+
+      // Periodically sync client cookie (throttled to 10s)
+      if (Date.now() - lastCookieSync > 10000) {
+        lastCookieSync = Date.now();
+        document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
         updateLastActive().catch(() => {});
       }
 
-      if (timeoutMs > 0) {
-        timer = setTimeout(() => {
-          triggerLock();
-        }, timeoutMs);
+      if (timeoutMs !== null && timeoutMs > 0) {
+        startOrResetTimer(timeoutMs);
       }
     };
 
     const handleVisibilityChange = () => {
+      if (isLockedRef.current) return;
+
       if (document.visibilityState === "hidden") {
         if (timeoutMs === 0) {
+          // Immediately mode: lock when app is left/backgrounded
           triggerLock();
+        } else if (timeoutMs !== null && timeoutMs > 0) {
+          // Record timestamp when app was backgrounded
+          lastActiveRef.current = Date.now();
+          document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
         }
       } else if (document.visibilityState === "visible") {
-        const elapsed = Date.now() - lastActive;
-        if (timeoutMs === 0 || elapsed >= timeoutMs) {
-          triggerLock();
-        } else {
-          resetTimer();
+        if (timeoutMs !== null && timeoutMs > 0) {
+          const elapsed = Date.now() - lastActiveRef.current;
+          if (elapsed >= timeoutMs) {
+            // Background time exceeded timeout
+            triggerLock();
+          } else {
+            // Restart timer for remaining duration
+            startOrResetTimer(timeoutMs - elapsed);
+          }
         }
       }
     };
 
-    const activityEvents = ["pointerdown", "keydown", "touchstart", "scroll"];
-    activityEvents.forEach((ev) => window.addEventListener(ev, resetTimer, { passive: true }));
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    // Initial timer setup for timed modes
+    if (timeoutMs !== null && timeoutMs > 0) {
+      startOrResetTimer(timeoutMs);
+    }
 
-    resetTimer();
+    const activityEvents = ["pointerdown", "keydown", "touchstart", "scroll", "mousemove", "click"];
+    activityEvents.forEach((ev) => window.addEventListener(ev, handleUserActivity, { passive: true }));
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handleVisibilityChange);
 
     return () => {
       if (timer) clearTimeout(timer);
-      activityEvents.forEach((ev) => window.removeEventListener(ev, resetTimer));
+      activityEvents.forEach((ev) => window.removeEventListener(ev, handleUserActivity));
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handleVisibilityChange);
     };
   }, [autoLockTimeout, getTimeoutMs, isLocked, triggerLock]);
 
@@ -174,7 +207,10 @@ export function AutoLockProvider({
 
       // Clear client cookie and restore access
       document.cookie = "myqian_locked=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
       setIsLocked(false);
+      isLockedRef.current = false;
+      lastActiveRef.current = Date.now();
       setError(null);
       router.refresh();
     } catch (err: any) {
@@ -198,7 +234,10 @@ export function AutoLockProvider({
 
       // Clear client cookie and restore access
       document.cookie = "myqian_locked=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
       setIsLocked(false);
+      isLockedRef.current = false;
+      lastActiveRef.current = Date.now();
       setPassword("");
       setError(null);
       router.refresh();
@@ -216,7 +255,10 @@ export function AutoLockProvider({
         lockNow: triggerLock,
         unlock: () => {
           document.cookie = "myqian_locked=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
           setIsLocked(false);
+          isLockedRef.current = false;
+          lastActiveRef.current = Date.now();
           router.refresh();
         },
       }}

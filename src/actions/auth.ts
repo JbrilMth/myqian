@@ -440,6 +440,8 @@ export async function updateAutoLockTimeout(
       .set({ autoLockTimeout: timeout, updatedAt: new Date() })
       .where(eq(users.id, user.id));
 
+    await updateLastActiveCookie();
+    revalidatePath("/", "layout");
     revalidatePath("/settings");
     return { success: true };
   } catch (err: any) {

@@ -129,6 +129,7 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
   };
 
   const handleAutoLockChange = async (val: string) => {
+    document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
     await updateAutoLockTimeout(val as any);
     router.refresh();
   };
