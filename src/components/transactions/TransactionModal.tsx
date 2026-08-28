@@ -98,132 +98,144 @@ export function TransactionModal({
       a.name.includes("现金")
   );
 
-  // Prepopulate on edit or modal open
+  const prevIsOpenRef = React.useRef(false);
+  const prevEditTxIdRef = React.useRef<string | null>(null);
+
+  // Prepopulate ONLY on modal open or when switching edit record
   useEffect(() => {
-    if (editTransaction) {
-      setType(editTransaction.type);
-      setTitle(editTransaction.title || "");
-      setDate(editTransaction.transactionDate || new Date().toISOString().split("T")[0]);
-      setTime(editTransaction.transactionTime || "");
-      setParentCategoryId(editTransaction.parentCategoryId || "");
-      setChildCategoryId(editTransaction.childCategoryId || "");
-      setPaymentChannel(editTransaction.paymentChannel || "wechat");
-      setSelectedSourceAccountId(editTransaction.sourceAccountId || "");
-      setSelectedDestAccountId(editTransaction.destinationAccountId || "");
-      setSourceAmount(editTransaction.sourceAmount || "");
-      setDestinationAmount(editTransaction.destinationAmount || "");
-      setAmount(
-        editTransaction.sourceAmount || editTransaction.destinationAmount || ""
-      );
-      setSelectedPersonId(editTransaction.personId || "");
-      
-      const pType = (editTransaction.personTransferType as PersonTransferType) || "send_with_return";
-      setPersonTransferType(pType);
-      
-      if (
-        pType === "receive_with_return" ||
-        pType === "receive_without_return" ||
-        pType === "borrow" ||
-        pType === "repayment_from_person" ||
-        pType === "receive"
-      ) {
-        setDirection("them_to_me");
-      } else {
-        setDirection("me_to_them");
-      }
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const editTxId = editTransaction?.id || null;
+    const isDifferentEditTx = editTransaction && editTxId !== prevEditTxIdRef.current;
 
-      setTransferTarget(editTransaction.personId ? "person" : "account");
-      setNote(editTransaction.note || "");
-      setError(null);
-    } else if (initialValues) {
-      setType(initialValues.type || "transfer");
-      setTitle(initialValues.title || "");
-      setAmount(initialValues.amount || "");
-      setDate(new Date().toISOString().split("T")[0]);
-      setTime(new Date().toTimeString().slice(0, 5));
-      setParentCategoryId("");
-      setChildCategoryId("");
-      setPaymentChannel("wechat");
-      setFundingSelection("balance");
-      setSelectedSourceAccountId(initialValues.sourceAccountId || icbcAccount?.id || accounts[0]?.id || "");
-      setSelectedDestAccountId(initialValues.destinationAccountId || icbcAccount?.id || accounts[0]?.id || "");
-      setSourceAmount("");
-      setDestinationAmount("");
-      
-      if (initialValues.personId) {
-        setTransferTarget("person");
-        setSelectedPersonId(initialValues.personId);
-      } else {
-        setTransferTarget("account");
-        setSelectedPersonId(people[0]?.id || "");
-      }
-
-      if (initialValues.personTransferType) {
-        setPersonTransferType(initialValues.personTransferType);
+    if (isOpening || isDifferentEditTx) {
+      if (editTransaction) {
+        setType(editTransaction.type);
+        setTitle(editTransaction.title || "");
+        setDate(editTransaction.transactionDate || new Date().toISOString().split("T")[0]);
+        setTime(editTransaction.transactionTime || "");
+        setParentCategoryId(editTransaction.parentCategoryId || "");
+        setChildCategoryId(editTransaction.childCategoryId || "");
+        setPaymentChannel(editTransaction.paymentChannel || "wechat");
+        setSelectedSourceAccountId(editTransaction.sourceAccountId || "");
+        setSelectedDestAccountId(editTransaction.destinationAccountId || "");
+        setSourceAmount(editTransaction.sourceAmount || "");
+        setDestinationAmount(editTransaction.destinationAmount || "");
+        setAmount(
+          editTransaction.sourceAmount || editTransaction.destinationAmount || ""
+        );
+        setSelectedPersonId(editTransaction.personId || "");
+        
+        const pType = (editTransaction.personTransferType as PersonTransferType) || "send_with_return";
+        setPersonTransferType(pType);
+        
         if (
-          initialValues.personTransferType === "receive_with_return" ||
-          initialValues.personTransferType === "receive_without_return" ||
-          initialValues.personTransferType === "borrow" ||
-          initialValues.personTransferType === "repayment_from_person" ||
-          initialValues.personTransferType === "receive"
+          pType === "receive_with_return" ||
+          pType === "receive_without_return" ||
+          pType === "borrow" ||
+          pType === "repayment_from_person" ||
+          pType === "receive"
         ) {
           setDirection("them_to_me");
         } else {
           setDirection("me_to_them");
         }
-      } else if (initialValues.relationship === "i_owe_them") {
-        setDirection("them_to_me");
-        setPersonTransferType("receive_with_return");
+
+        setTransferTarget(editTransaction.personId ? "person" : "account");
+        setNote(editTransaction.note || "");
+        setError(null);
+      } else if (initialValues) {
+        setType(initialValues.type || "transfer");
+        setTitle(initialValues.title || "");
+        setAmount(initialValues.amount || "");
+        setDate(new Date().toISOString().split("T")[0]);
+        setTime(new Date().toTimeString().slice(0, 5));
+        setParentCategoryId("");
+        setChildCategoryId("");
+        setPaymentChannel("wechat");
+        setFundingSelection("balance");
+        setSelectedSourceAccountId(initialValues.sourceAccountId || icbcAccount?.id || accounts[0]?.id || "");
+        setSelectedDestAccountId(initialValues.destinationAccountId || icbcAccount?.id || accounts[0]?.id || "");
+        setSourceAmount("");
+        setDestinationAmount("");
+        
+        if (initialValues.personId) {
+          setTransferTarget("person");
+          setSelectedPersonId(initialValues.personId);
+        } else {
+          setTransferTarget("account");
+          setSelectedPersonId(people[0]?.id || "");
+        }
+
+        if (initialValues.personTransferType) {
+          setPersonTransferType(initialValues.personTransferType);
+          if (
+            initialValues.personTransferType === "receive_with_return" ||
+            initialValues.personTransferType === "receive_without_return" ||
+            initialValues.personTransferType === "borrow" ||
+            initialValues.personTransferType === "repayment_from_person" ||
+            initialValues.personTransferType === "receive"
+          ) {
+            setDirection("them_to_me");
+          } else {
+            setDirection("me_to_them");
+          }
+        } else if (initialValues.relationship === "i_owe_them") {
+          setDirection("them_to_me");
+          setPersonTransferType("receive_with_return");
+        } else {
+          setDirection("me_to_them");
+          setPersonTransferType("send_with_return");
+        }
+
+        setNote("");
+        setError(null);
       } else {
+        // Fresh Add Transaction
+        setType("expense");
+        setTitle("");
+        setAmount("");
+        setDate(new Date().toISOString().split("T")[0]);
+        setTime(new Date().toTimeString().slice(0, 5));
+        setParentCategoryId("");
+        setChildCategoryId("");
+        setPaymentChannel("wechat");
+        setFundingSelection("balance");
+        setSelectedSourceAccountId(wechatAccount?.id || accounts[0]?.id || "");
+        setSelectedDestAccountId(accounts[1]?.id || accounts[0]?.id || "");
+        setSourceAmount("");
+        setDestinationAmount("");
+        setSelectedPersonId(people[0]?.id || "");
         setDirection("me_to_them");
         setPersonTransferType("send_with_return");
-      }
-
-      setNote("");
-      setError(null);
-    } else {
-      setType("expense");
-      setTitle("");
-      setAmount("");
-      setDate(new Date().toISOString().split("T")[0]);
-      setTime(new Date().toTimeString().slice(0, 5));
-      setParentCategoryId("");
-      setChildCategoryId("");
-      setPaymentChannel("wechat");
-      setFundingSelection("balance");
-      setSelectedSourceAccountId(wechatAccount?.id || accounts[0]?.id || "");
-      setSelectedDestAccountId(accounts[1]?.id || accounts[0]?.id || "");
-      setSourceAmount("");
-      setDestinationAmount("");
-      setSelectedPersonId(people[0]?.id || "");
-      setDirection("me_to_them");
-      setPersonTransferType("send_with_return");
-      setTransferTarget("account");
-      setNote("");
-      setError(null);
-    }
-  }, [editTransaction, initialValues, isOpen, accounts, people]);
-
-  // Update funding account based on payment channel for expense
-  useEffect(() => {
-    if (type === "expense") {
-      if (paymentChannel === "wechat") {
-        if (fundingSelection === "balance") {
-          setSelectedSourceAccountId(wechatAccount?.id || accounts[0]?.id || "");
-        } else if (fundingSelection === "icbc") {
-          setSelectedSourceAccountId(icbcAccount?.id || accounts[0]?.id || "");
-        }
-      } else if (paymentChannel === "alipay") {
-        if (fundingSelection === "balance") {
-          setSelectedSourceAccountId(alipayAccount?.id || accounts[0]?.id || "");
-        } else if (fundingSelection === "icbc") {
-          setSelectedSourceAccountId(icbcAccount?.id || accounts[0]?.id || "");
-        }
-      } else if (paymentChannel === "cash") {
-        setSelectedSourceAccountId(cashAccount?.id || accounts[0]?.id || "");
+        setTransferTarget("account");
+        setNote("");
+        setError(null);
       }
     }
-  }, [type, paymentChannel, fundingSelection, accounts]);
+
+    prevIsOpenRef.current = isOpen;
+    prevEditTxIdRef.current = editTransaction?.id || null;
+  }, [isOpen, editTransaction, initialValues]);
+
+  const handlePaymentChannelChange = (ch: PaymentChannel) => {
+    setPaymentChannel(ch);
+    if (ch === "wechat") {
+      setSelectedSourceAccountId(fundingSelection === "icbc" ? (icbcAccount?.id || accounts[0]?.id || "") : (wechatAccount?.id || accounts[0]?.id || ""));
+    } else if (ch === "alipay") {
+      setSelectedSourceAccountId(fundingSelection === "icbc" ? (icbcAccount?.id || accounts[0]?.id || "") : (alipayAccount?.id || accounts[0]?.id || ""));
+    } else if (ch === "cash") {
+      setSelectedSourceAccountId(cashAccount?.id || accounts[0]?.id || "");
+    }
+  };
+
+  const handleFundingSelectionChange = (fs: "balance" | "icbc" | "custom") => {
+    setFundingSelection(fs);
+    if (paymentChannel === "wechat") {
+      setSelectedSourceAccountId(fs === "icbc" ? (icbcAccount?.id || accounts[0]?.id || "") : (wechatAccount?.id || accounts[0]?.id || ""));
+    } else if (paymentChannel === "alipay") {
+      setSelectedSourceAccountId(fs === "icbc" ? (icbcAccount?.id || accounts[0]?.id || "") : (alipayAccount?.id || accounts[0]?.id || ""));
+    }
+  };
 
   // Category filter
   const selectedParentCategory = categories.find((c) => c.id === parentCategoryId);
@@ -553,7 +565,7 @@ export function TransactionModal({
                 <button
                   key={ch.id}
                   type="button"
-                  onClick={() => setPaymentChannel(ch.id as PaymentChannel)}
+                  onClick={() => handlePaymentChannelChange(ch.id as PaymentChannel)}
                   className={cn(
                     "py-2 px-2.5 text-xs font-medium rounded-lg border transition-all flex items-center justify-center gap-1.5 min-h-[38px]",
                     paymentChannel === ch.id
@@ -574,7 +586,7 @@ export function TransactionModal({
                 <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
                   <button
                     type="button"
-                    onClick={() => setFundingSelection("balance")}
+                    onClick={() => handleFundingSelectionChange("balance")}
                     className={cn(
                       "px-3 py-1.5 text-xs rounded-lg border text-center font-medium",
                       fundingSelection === "balance"
@@ -586,7 +598,7 @@ export function TransactionModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setFundingSelection("icbc")}
+                    onClick={() => handleFundingSelectionChange("icbc")}
                     className={cn(
                       "px-3 py-1.5 text-xs rounded-lg border text-center font-medium",
                       fundingSelection === "icbc"
@@ -607,7 +619,7 @@ export function TransactionModal({
                 <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
                   <button
                     type="button"
-                    onClick={() => setFundingSelection("balance")}
+                    onClick={() => handleFundingSelectionChange("balance")}
                     className={cn(
                       "px-3 py-1.5 text-xs rounded-lg border text-center font-medium",
                       fundingSelection === "balance"
@@ -619,7 +631,7 @@ export function TransactionModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setFundingSelection("icbc")}
+                    onClick={() => handleFundingSelectionChange("icbc")}
                     className={cn(
                       "px-3 py-1.5 text-xs rounded-lg border text-center font-medium",
                       fundingSelection === "icbc"

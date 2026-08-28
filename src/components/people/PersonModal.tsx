@@ -23,15 +23,27 @@ export function PersonModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const prevIsOpenRef = React.useRef(false);
+  const prevPersonIdRef = React.useRef<string | null>(null);
+
   useEffect(() => {
-    if (person) {
-      setName(person.name);
-      setNote(person.note || "");
-    } else {
-      setName("");
-      setNote("");
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const personId = person?.id || null;
+    const isDifferentPerson = person && personId !== prevPersonIdRef.current;
+
+    if (isOpening || isDifferentPerson) {
+      if (person) {
+        setName(person.name);
+        setNote(person.note || "");
+      } else {
+        setName("");
+        setNote("");
+      }
+      setError(null);
     }
-    setError(null);
+
+    prevIsOpenRef.current = isOpen;
+    prevPersonIdRef.current = person?.id || null;
   }, [person, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {

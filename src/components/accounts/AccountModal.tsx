@@ -25,19 +25,31 @@ export function AccountModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const prevIsOpenRef = React.useRef(false);
+  const prevAccountIdRef = React.useRef<string | null>(null);
+
   useEffect(() => {
-    if (account) {
-      setName(account.name);
-      setType(account.type);
-      setCurrency(account.currency);
-      setInitialBalance(account.initialBalance);
-    } else {
-      setName("");
-      setType("bank");
-      setCurrency("CNY");
-      setInitialBalance("0.00");
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const accountId = account?.id || null;
+    const isDifferentAccount = account && accountId !== prevAccountIdRef.current;
+
+    if (isOpening || isDifferentAccount) {
+      if (account) {
+        setName(account.name);
+        setType(account.type);
+        setCurrency(account.currency);
+        setInitialBalance(account.initialBalance);
+      } else {
+        setName("");
+        setType("bank");
+        setCurrency("CNY");
+        setInitialBalance("0.00");
+      }
+      setError(null);
     }
-    setError(null);
+
+    prevIsOpenRef.current = isOpen;
+    prevAccountIdRef.current = account?.id || null;
   }, [account, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {

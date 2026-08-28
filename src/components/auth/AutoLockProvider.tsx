@@ -119,7 +119,6 @@ export function AutoLockProvider({
       if (Date.now() - lastCookieSync > 10000) {
         lastCookieSync = Date.now();
         document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
-        updateLastActive().catch(() => {});
       }
 
       if (timeoutMs !== null && timeoutMs > 0) {

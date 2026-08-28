@@ -27,15 +27,27 @@ export function CategoryModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const prevIsOpenRef = React.useRef(false);
+  const prevCatIdRef = React.useRef<string | null>(null);
+
   useEffect(() => {
-    if (editCategory) {
-      setName(editCategory.name);
-      setParentId(editCategory.parentId);
-    } else {
-      setName("");
-      setParentId(defaultParentId || null);
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const catId = editCategory?.id || null;
+    const isDifferentCat = editCategory && catId !== prevCatIdRef.current;
+
+    if (isOpening || isDifferentCat) {
+      if (editCategory) {
+        setName(editCategory.name);
+        setParentId(editCategory.parentId);
+      } else {
+        setName("");
+        setParentId(defaultParentId || null);
+      }
+      setError(null);
     }
-    setError(null);
+
+    prevIsOpenRef.current = isOpen;
+    prevCatIdRef.current = editCategory?.id || null;
   }, [editCategory, defaultParentId, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
