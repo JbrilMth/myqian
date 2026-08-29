@@ -12,17 +12,11 @@ import {
   Search,
   RotateCcw,
   Calendar,
-  Filter,
-  Check,
-  ChevronDown,
   ArrowRight,
   TrendingUp,
   TrendingDown,
   Scale,
   Download,
-  Building2,
-  FolderTree,
-  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -414,18 +408,22 @@ export function ReportsClient({
               className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl font-medium focus:ring-1 focus:ring-zinc-900 dark:focus:ring-zinc-100 outline-hidden"
             >
               <option value="all">All Categories</option>
-              {categories.map((parent) => (
-                <optgroup key={parent.id} label={`📁 ${parent.name}`}>
-                  <option value={`parent:${parent.id}`}>
-                    All {parent.name} (Parent & Subcategories)
+              {categories.map((parent) =>
+                parent.children && parent.children.length > 0 ? (
+                  <optgroup key={parent.id} label={parent.name}>
+                    <option value={`parent:${parent.id}`}>{parent.name} (All)</option>
+                    {parent.children.map((child) => (
+                      <option key={child.id} value={`child:${child.id}`}>
+                        &nbsp;&nbsp;{child.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  <option key={parent.id} value={`parent:${parent.id}`}>
+                    {parent.name}
                   </option>
-                  {parent.children.map((child) => (
-                    <option key={child.id} value={`child:${child.id}`}>
-                      &nbsp;&nbsp;↳ {child.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
+                )
+              )}
             </select>
           </div>
 
