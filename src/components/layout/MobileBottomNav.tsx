@@ -12,6 +12,7 @@ import {
   Users,
   FolderTree,
   Settings,
+  FileSpreadsheet,
   X,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -50,6 +51,12 @@ export function MobileBottomNav({ onOpenTransactionModal }: MobileBottomNavProps
   ];
 
   const moreTabs = [
+    {
+      name: "Reports & Export",
+      href: "/reports",
+      icon: FileSpreadsheet,
+      desc: "Filter & export PDF / Excel financial statements",
+    },
     {
       name: "Categories",
       href: "/categories",
@@ -207,13 +214,37 @@ export function MobileBottomNav({ onOpenTransactionModal }: MobileBottomNavProps
                 </div>
               </Link>
 
+              {/* Reports & Export */}
+              <Link
+                href="/reports"
+                onClick={() => setIsMoreOpen(false)}
+                className={cn(
+                  "flex items-center gap-3 p-3 rounded-xl border transition-all",
+                  isTabActive(moreTabs[0])
+                    ? "bg-zinc-50 dark:bg-zinc-800/80 border-zinc-900 dark:border-zinc-100 font-semibold"
+                    : "bg-white dark:bg-zinc-900 border-zinc-200/80 dark:border-zinc-800 hover:bg-zinc-50"
+                )}
+              >
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <FileSpreadsheet className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                    Reports & Export
+                  </div>
+                  <div className="text-[11px] text-zinc-400">
+                    Filter & export PDF / Excel statements
+                  </div>
+                </div>
+              </Link>
+
               {/* Categories */}
               <Link
                 href="/categories"
                 onClick={() => setIsMoreOpen(false)}
                 className={cn(
                   "flex items-center gap-3 p-3 rounded-xl border transition-all",
-                  isTabActive(moreTabs[0])
+                  isTabActive(moreTabs[1])
                     ? "bg-zinc-50 dark:bg-zinc-800/80 border-zinc-900 dark:border-zinc-100 font-semibold"
                     : "bg-white dark:bg-zinc-900 border-zinc-200/80 dark:border-zinc-800 hover:bg-zinc-50"
                 )}
@@ -237,7 +268,7 @@ export function MobileBottomNav({ onOpenTransactionModal }: MobileBottomNavProps
                 onClick={() => setIsMoreOpen(false)}
                 className={cn(
                   "flex items-center gap-3 p-3 rounded-xl border transition-all",
-                  isTabActive(moreTabs[1])
+                  isTabActive(moreTabs[2])
                     ? "bg-zinc-50 dark:bg-zinc-800/80 border-zinc-900 dark:border-zinc-100 font-semibold"
                     : "bg-white dark:bg-zinc-900 border-zinc-200/80 dark:border-zinc-800 hover:bg-zinc-50"
                 )}

@@ -11,6 +11,7 @@ import {
   Users,
   Settings,
   Plus,
+  FileSpreadsheet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -56,6 +57,11 @@ export function Sidebar({ onOpenTransactionModal }: SidebarProps) {
           name: "People",
           href: "/people",
           icon: Users,
+        },
+        {
+          name: "Reports & Export",
+          href: "/reports",
+          icon: FileSpreadsheet,
         },
       ],
     },
