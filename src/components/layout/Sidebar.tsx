@@ -18,6 +18,7 @@ import {
   CalendarDays,
   Calendar as CalendarIcon,
   Search,
+  StickyNote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -99,6 +100,11 @@ export function Sidebar({ onOpenTransactionModal }: SidebarProps) {
     {
       label: "TOOLS",
       items: [
+        {
+          name: "Notes",
+          href: "/notes",
+          icon: StickyNote,
+        },
         {
           name: "Search",
           href: "/search",

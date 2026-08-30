@@ -228,6 +228,7 @@ export async function destroySession(): Promise<void> {
     cookieStore.delete(SESSION_COOKIE_NAME);
     cookieStore.delete(LOCK_COOKIE_NAME);
     cookieStore.delete(LAST_ACTIVE_COOKIE_NAME);
+    cookieStore.delete("myqian_notes_unlocked");
   } catch (error) {
     console.error("Destroy session error:", error);
   }

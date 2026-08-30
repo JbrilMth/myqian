@@ -19,6 +19,7 @@ import {
   CalendarDays,
   Calendar as CalendarIcon,
   Search,
+  StickyNote,
   X,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -114,10 +115,16 @@ export function MobileBottomNav({ onOpenTransactionModal }: MobileBottomNavProps
       label: "TOOLS",
       items: [
         {
+          name: "Notes",
+          href: "/notes",
+          icon: StickyNote,
+          desc: "Personal thoughts, ideas & observations",
+        },
+        {
           name: "Search Everything",
           href: "/search",
           icon: Search,
-          desc: "Find transactions, notes, people & tags",
+          desc: "Find transactions, people & categories",
         },
         {
           name: "Reports & Export",

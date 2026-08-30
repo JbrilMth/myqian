@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { startRegistration } from "@simplewebauthn/browser";
 import { ExchangeRateModal } from "./ExchangeRateModal";
 import { ChangePasswordModal } from "./ChangePasswordModal";
+import { ChangeNotesPasscodeModal } from "./ChangeNotesPasscodeModal";
 import { deleteExchangeRate } from "@/actions/settings";
 import {
   startPasskeyRegistration,
@@ -33,6 +34,7 @@ import {
   Loader2,
   CheckCircle2,
   KeyRound,
+  StickyNote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +44,7 @@ interface SettingsClientProps {
     hasPasskey: boolean;
     autoLockTimeout: string;
     email: string;
+    hasNotesPasscode?: boolean;
   };
 }
 
@@ -49,6 +52,7 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
   const router = useRouter();
   const [isRateModalOpen, setIsRateModalOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isNotesPasscodeModalOpen, setIsNotesPasscodeModalOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
@@ -282,6 +286,42 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
               <option value="5m">After 5 minutes</option>
               <option value="never">Never</option>
             </select>
+          </div>
+
+          {/* Notes 6-Digit Passcode Security */}
+          <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 mt-0.5">
+                <StickyNote className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                    Notes 6-Digit Passcode
+                  </span>
+                  {securityStatus.hasNotesPasscode ? (
+                    <span className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 rounded-md">
+                      Enabled
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 text-[10px] font-medium bg-zinc-100 text-zinc-500 dark:bg-zinc-800 rounded-md">
+                      Not Set
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Dedicated 6-digit passcode protecting your private notes and categories.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsNotesPasscodeModalOpen(true)}
+              className="px-3.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold transition-colors shrink-0 cursor-pointer"
+            >
+              {securityStatus.hasNotesPasscode ? "Change Passcode" : "Set Passcode"}
+            </button>
           </div>
 
           {/* Change Password */}
@@ -547,6 +587,13 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
       <ChangePasswordModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
+      />
+
+      <ChangeNotesPasscodeModal
+        isOpen={isNotesPasscodeModalOpen}
+        onClose={() => setIsNotesPasscodeModalOpen(false)}
+        hasExistingPasscode={Boolean(securityStatus.hasNotesPasscode)}
+        onSuccess={() => router.refresh()}
       />
     </div>
   );

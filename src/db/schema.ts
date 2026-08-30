@@ -19,6 +19,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   autoLockTimeout: text("auto_lock_timeout").notNull().default("never"), // 'immediately' | '1m' | '5m' | 'never'
+  notesPasscodeHash: text("notes_passcode_hash"), // 6-digit Notes Passcode hash (null if not yet set up)
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -336,3 +337,73 @@ export const transactionsRelations = relations(transactions, ({ one }) => ({
     references: [people.id],
   }),
 }));
+
+// ----------------------------------------------------
+// NOTES & NOTE CATEGORIES TABLES (SEPARATED FROM FINANCIAL DATA)
+// ----------------------------------------------------
+
+export const noteCategories = pgTable(
+  "note_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_note_categories_user").on(table.userId),
+  ]
+);
+
+export const notes = pgTable(
+  "notes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    categoryId: uuid("category_id").references(() => noteCategories.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_notes_user").on(table.userId),
+    index("idx_notes_category").on(table.categoryId),
+    index("idx_notes_created_at").on(table.createdAt),
+  ]
+);
+
+export const noteCategoriesRelations = relations(noteCategories, ({ one, many }) => ({
+  user: one(users, {
+    fields: [noteCategories.userId],
+    references: [users.id],
+  }),
+  notes: many(notes),
+}));
+
+export const notesRelations = relations(notes, ({ one }) => ({
+  user: one(users, {
+    fields: [notes.userId],
+    references: [users.id],
+  }),
+  category: one(noteCategories, {
+    fields: [notes.categoryId],
+    references: [noteCategories.id],
+  }),
+}));
+

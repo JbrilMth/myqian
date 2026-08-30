@@ -252,6 +252,7 @@ export async function getUserSecurityStatus(): Promise<{
   autoLockTimeout: string;
   email: string;
   isLocked: boolean;
+  hasNotesPasscode: boolean;
 }> {
   try {
     const session = await validateSession();
@@ -261,13 +262,21 @@ export async function getUserSecurityStatus(): Promise<{
         autoLockTimeout: "never",
         email: "",
         isLocked: false,
+        hasNotesPasscode: false,
       };
     }
     const user = session.user;
-    const userPasskeys = await db
-      .select({ id: passkeyCredentials.id })
-      .from(passkeyCredentials)
-      .where(eq(passkeyCredentials.userId, user.id));
+    const [userPasskeys, [dbUser]] = await Promise.all([
+      db
+        .select({ id: passkeyCredentials.id })
+        .from(passkeyCredentials)
+        .where(eq(passkeyCredentials.userId, user.id)),
+      db
+        .select({ notesPasscodeHash: users.notesPasscodeHash })
+        .from(users)
+        .where(eq(users.id, user.id))
+        .limit(1),
+    ]);
 
     const locked = await isAppLocked();
 
@@ -276,6 +285,7 @@ export async function getUserSecurityStatus(): Promise<{
       autoLockTimeout: user.autoLockTimeout,
       email: user.email,
       isLocked: locked,
+      hasNotesPasscode: Boolean(dbUser?.notesPasscodeHash),
     };
   } catch {
     return {
@@ -283,6 +293,7 @@ export async function getUserSecurityStatus(): Promise<{
       autoLockTimeout: "never",
       email: "",
       isLocked: false,
+      hasNotesPasscode: false,
     };
   }
 }
