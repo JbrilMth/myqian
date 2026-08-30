@@ -78,10 +78,10 @@ export function AppShell({
 
   return (
     <ModalContext.Provider value={{ openAddTransaction, openEditTransaction }}>
-      <div className="min-h-screen flex flex-col md:flex-row bg-[#FAFAFA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans selection:bg-zinc-900 selection:text-white">
+      <div className="min-h-screen md:h-screen md:overflow-hidden flex flex-col md:flex-row bg-[#FAFAFA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans selection:bg-zinc-900 selection:text-white">
         <Sidebar onOpenTransactionModal={() => openAddTransaction()} />
 
-        <main className="flex-1 min-w-0 p-4 sm:p-6 md:p-8 lg:p-10 max-w-7xl mx-auto w-full pb-24 md:pb-10">
+        <main className="flex-1 min-w-0 md:h-screen md:overflow-y-auto md:overscroll-contain p-4 sm:p-6 md:p-8 lg:p-10 max-w-7xl mx-auto w-full pb-24 md:pb-10">
           {children}
         </main>
 
