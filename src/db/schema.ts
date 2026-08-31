@@ -19,6 +19,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   autoLockTimeout: text("auto_lock_timeout").notNull().default("never"), // 'immediately' | '1m' | '5m' | 'never'
+  noteLockTimeout: text("note_lock_timeout").notNull().default("5m"), // 'immediately' | '1m' | '5m' | 'never'
   notesPasscodeHash: text("notes_passcode_hash"), // 6-digit Notes Passcode hash (null if not yet set up)
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()

@@ -250,6 +250,7 @@ export async function getGlobalPasskeyAvailability(): Promise<boolean> {
 export async function getUserSecurityStatus(): Promise<{
   hasPasskey: boolean;
   autoLockTimeout: string;
+  noteLockTimeout: string;
   email: string;
   isLocked: boolean;
   hasNotesPasscode: boolean;
@@ -260,6 +261,7 @@ export async function getUserSecurityStatus(): Promise<{
       return {
         hasPasskey: false,
         autoLockTimeout: "never",
+        noteLockTimeout: "5m",
         email: "",
         isLocked: false,
         hasNotesPasscode: false,
@@ -272,7 +274,10 @@ export async function getUserSecurityStatus(): Promise<{
         .from(passkeyCredentials)
         .where(eq(passkeyCredentials.userId, user.id)),
       db
-        .select({ notesPasscodeHash: users.notesPasscodeHash })
+        .select({
+          notesPasscodeHash: users.notesPasscodeHash,
+          noteLockTimeout: users.noteLockTimeout,
+        })
         .from(users)
         .where(eq(users.id, user.id))
         .limit(1),
@@ -283,6 +288,7 @@ export async function getUserSecurityStatus(): Promise<{
     return {
       hasPasskey: userPasskeys.length > 0,
       autoLockTimeout: user.autoLockTimeout,
+      noteLockTimeout: dbUser?.noteLockTimeout || "5m",
       email: user.email,
       isLocked: locked,
       hasNotesPasscode: Boolean(dbUser?.notesPasscodeHash),
@@ -291,6 +297,7 @@ export async function getUserSecurityStatus(): Promise<{
     return {
       hasPasskey: false,
       autoLockTimeout: "never",
+      noteLockTimeout: "5m",
       email: "",
       isLocked: false,
       hasNotesPasscode: false,

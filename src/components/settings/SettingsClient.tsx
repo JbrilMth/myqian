@@ -14,6 +14,7 @@ import {
   updateAutoLockTimeout,
   logout,
 } from "@/actions/auth";
+import { updateNoteLockTimeoutAction } from "@/actions/notes-auth";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import {
@@ -35,6 +36,7 @@ import {
   CheckCircle2,
   KeyRound,
   StickyNote,
+  Timer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +45,7 @@ interface SettingsClientProps {
   securityStatus: {
     hasPasskey: boolean;
     autoLockTimeout: string;
+    noteLockTimeout?: string;
     email: string;
     hasNotesPasscode?: boolean;
   };
@@ -53,6 +56,9 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
   const [isRateModalOpen, setIsRateModalOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isNotesPasscodeModalOpen, setIsNotesPasscodeModalOpen] = useState(false);
+  const [currentNoteLockTimeout, setCurrentNoteLockTimeout] = useState(
+    securityStatus.noteLockTimeout || "5m"
+  );
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
@@ -135,6 +141,12 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
   const handleAutoLockChange = async (val: string) => {
     document.cookie = `myqian_last_active=${Date.now()}; path=/; max-age=2592000; SameSite=Lax`;
     await updateAutoLockTimeout(val as any);
+    router.refresh();
+  };
+
+  const handleNoteLockChange = async (val: string) => {
+    setCurrentNoteLockTimeout(val);
+    await updateNoteLockTimeoutAction(val as any);
     router.refresh();
   };
 
@@ -322,6 +334,34 @@ export function SettingsClient({ initialRates, securityStatus }: SettingsClientP
             >
               {securityStatus.hasNotesPasscode ? "Change Passcode" : "Set Passcode"}
             </button>
+          </div>
+
+          {/* Note-Lock Timeout Setting */}
+          <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 mt-0.5">
+                <Timer className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                  Note-Lock
+                </span>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Automatically lock the Notes section after a period of inactivity or upon leaving Notes.
+                </p>
+              </div>
+            </div>
+
+            <select
+              value={currentNoteLockTimeout}
+              onChange={(e) => handleNoteLockChange(e.target.value)}
+              className="text-xs font-medium bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 cursor-pointer focus:outline-hidden"
+            >
+              <option value="immediately">Immediately</option>
+              <option value="1m">After 1 minute</option>
+              <option value="5m">After 5 minutes</option>
+              <option value="never">Never</option>
+            </select>
           </div>
 
           {/* Change Password */}

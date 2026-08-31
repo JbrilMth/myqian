@@ -122,6 +122,9 @@ export async function setAppLockedCookie(): Promise<void> {
       path: "/",
       maxAge: SESSION_DURATION_DAYS * 24 * 60 * 60,
     });
+    // RULE: APP LOCK ALWAYS OVERRIDES NOTE LOCK
+    cookieStore.delete("myqian_notes_unlocked");
+    cookieStore.delete("myqian_notes_last_active");
   } catch (error) {
     console.error("Set lock cookie error:", error);
   }
@@ -229,6 +232,7 @@ export async function destroySession(): Promise<void> {
     cookieStore.delete(LOCK_COOKIE_NAME);
     cookieStore.delete(LAST_ACTIVE_COOKIE_NAME);
     cookieStore.delete("myqian_notes_unlocked");
+    cookieStore.delete("myqian_notes_last_active");
   } catch (error) {
     console.error("Destroy session error:", error);
   }

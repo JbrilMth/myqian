@@ -2,6 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { validateSession } from "@/lib/auth/session";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import {
   hasNotesPasscode,
   isNotesUnlocked,
@@ -9,6 +12,8 @@ import {
   setupNotesPasscode,
   changeNotesPasscode,
   lockNotes,
+  updateNoteLockTimeout,
+  updateNotesLastActiveCookie,
 } from "@/lib/notes/auth";
 
 export async function getNotesSecurityStatusAction() {
@@ -19,13 +24,22 @@ export async function getNotesSecurityStatusAction() {
     }
 
     const userId = session.user.id;
-    const hasPass = await hasNotesPasscode(userId);
+    const [hasPass, [dbUser]] = await Promise.all([
+      hasNotesPasscode(userId),
+      db
+        .select({ noteLockTimeout: users.noteLockTimeout })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1),
+    ]);
+
     const unlocked = hasPass ? await isNotesUnlocked(userId) : true;
 
     return {
       success: true,
       hasPasscode: hasPass,
       isUnlocked: unlocked,
+      noteLockTimeout: dbUser?.noteLockTimeout || "5m",
     };
   } catch (err: any) {
     console.error("getNotesSecurityStatusAction error:", err);
@@ -108,6 +122,25 @@ export async function changeNotesPasscodeAction(
   }
 }
 
+export async function updateNoteLockTimeoutAction(
+  timeout: "immediately" | "1m" | "5m" | "never"
+) {
+  try {
+    const session = await validateSession();
+    if (!session) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    await updateNoteLockTimeout(session.user.id, timeout);
+    revalidatePath("/settings");
+    revalidatePath("/notes");
+    return { success: true };
+  } catch (err: any) {
+    console.error("updateNoteLockTimeoutAction error:", err);
+    return { success: false, error: err.message || "Failed to update Note-Lock." };
+  }
+}
+
 export async function lockNotesAction() {
   try {
     await lockNotes();
@@ -116,5 +149,14 @@ export async function lockNotesAction() {
   } catch (err: any) {
     console.error("lockNotesAction error:", err);
     return { success: false, error: err.message || "Failed to lock Notes." };
+  }
+}
+
+export async function touchNotesActiveAction() {
+  try {
+    await updateNotesLastActiveCookie();
+    return { success: true };
+  } catch {
+    return { success: false };
   }
 }

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useTransition, useMemo } from "react";
+import React, { useState, useTransition, useMemo, useEffect, useRef } from "react";
 import { fetchNotesAction, fetchNoteCategoriesAction } from "@/actions/notes";
-import { lockNotesAction } from "@/actions/notes-auth";
+import { lockNotesAction, touchNotesActiveAction } from "@/actions/notes-auth";
 import { NoteModal } from "./NoteModal";
 import { NoteViewModal } from "./NoteViewModal";
 import { ManageCategoriesModal } from "./ManageCategoriesModal";
@@ -25,11 +25,13 @@ import type { NoteCategory, NoteWithCategory } from "@/lib/notes/types";
 interface NotesClientProps {
   initialNotes: NoteWithCategory[];
   initialCategories: NoteCategory[];
+  noteLockTimeout?: string;
 }
 
 export function NotesClient({
   initialNotes,
   initialCategories,
+  noteLockTimeout = "5m",
 }: NotesClientProps) {
   const [notes, setNotes] = useState<NoteWithCategory[]>(initialNotes);
   const [categories, setCategories] = useState<NoteCategory[]>(initialCategories);
@@ -48,6 +50,67 @@ export function NotesClient({
   const [isManageCatModalOpen, setIsManageCatModalOpen] = useState(false);
 
   const [isPending, startTransition] = useTransition();
+
+  // Dedicated Note-Lock Timer & Leaving Notes Listener
+  const lastActiveRef = useRef(Date.now());
+  const lastTouchRef = useRef(Date.now());
+
+  useEffect(() => {
+    // 1. Activity listeners within Notes
+    const handleActivity = () => {
+      lastActiveRef.current = Date.now();
+      const now = Date.now();
+      if (now - lastTouchRef.current >= 4000) {
+        lastTouchRef.current = now;
+        touchNotesActiveAction().catch(() => {});
+      }
+    };
+
+    window.addEventListener("mousemove", handleActivity, { passive: true });
+    window.addEventListener("mousedown", handleActivity, { passive: true });
+    window.addEventListener("keydown", handleActivity, { passive: true });
+    window.addEventListener("touchstart", handleActivity, { passive: true });
+    window.addEventListener("scroll", handleActivity, { passive: true });
+
+    // Initial touch on mount
+    touchNotesActiveAction().catch(() => {});
+
+    // 2. Inactivity check interval for "1m" and "5m"
+    let intervalId: NodeJS.Timeout | null = null;
+    if (noteLockTimeout === "1m" || noteLockTimeout === "5m") {
+      const timeoutMs = noteLockTimeout === "1m" ? 60 * 1000 : 5 * 60 * 1000;
+      intervalId = setInterval(async () => {
+        const elapsed = Date.now() - lastActiveRef.current;
+        if (elapsed >= timeoutMs) {
+          await lockNotesAction();
+          window.location.reload();
+        }
+      }, 2500);
+    }
+
+    // 3. Visibility / Backgrounding listener for "immediately"
+    const handleVisibilityChange = () => {
+      if (document.hidden && noteLockTimeout === "immediately") {
+        lockNotesAction().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // 4. Cleanup on unmount (e.g. user navigates away from Notes to Dashboard)
+    return () => {
+      window.removeEventListener("mousemove", handleActivity);
+      window.removeEventListener("mousedown", handleActivity);
+      window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("touchstart", handleActivity);
+      window.removeEventListener("scroll", handleActivity);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (intervalId) clearInterval(intervalId);
+
+      if (noteLockTimeout === "immediately") {
+        lockNotesAction().catch(() => {});
+      }
+    };
+  }, [noteLockTimeout]);
 
   const reloadNotes = (
     catId: string = selectedCategory,

@@ -1,7 +1,10 @@
 import React from "react";
-import { validateSession, isAppLocked } from "@/lib/auth/session";
+import { validateSession } from "@/lib/auth/session";
 import { hasNotesPasscode, isNotesUnlocked } from "@/lib/notes/auth";
 import { getNotes, getNoteCategories } from "@/lib/notes/service";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { NotesClient } from "@/components/notes/NotesClient";
 import { NotesLockScreen } from "@/components/notes/NotesLockScreen";
 import { NotesSetupScreen } from "@/components/notes/NotesSetupScreen";
@@ -20,7 +23,16 @@ export default async function NotesPage({
   }
 
   const userId = session.user.id;
-  const hasPasscode = await hasNotesPasscode(userId);
+  const [hasPasscode, [dbUser]] = await Promise.all([
+    hasNotesPasscode(userId),
+    db
+      .select({ noteLockTimeout: users.noteLockTimeout })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1),
+  ]);
+
+  const noteLockTimeout = dbUser?.noteLockTimeout || "5m";
 
   // 1. If user hasn't created a 6-digit Notes Passcode yet -> Show Setup Screen
   if (!hasPasscode) {
@@ -43,5 +55,11 @@ export default async function NotesPage({
     getNoteCategories(),
   ]);
 
-  return <NotesClient initialNotes={notes} initialCategories={categories} />;
+  return (
+    <NotesClient
+      initialNotes={notes}
+      initialCategories={categories}
+      noteLockTimeout={noteLockTimeout}
+    />
+  );
 }

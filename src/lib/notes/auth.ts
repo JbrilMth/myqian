@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { validateSession, isAppLocked, hashToken } from "@/lib/auth/session";
 
 const NOTES_UNLOCKED_COOKIE = "myqian_notes_unlocked";
+const NOTES_LAST_ACTIVE_COOKIE = "myqian_notes_last_active";
 const FAILED_ATTEMPTS_COOKIE = "myqian_notes_failed_attempts";
 const LOCKOUT_COOKIE = "myqian_notes_lockout_until";
 
@@ -19,16 +20,67 @@ function generateNotesUnlockToken(userId: string): string {
 }
 
 /**
- * Check if the user is authenticated and Notes is unlocked
+ * Check if the user is authenticated and Notes is unlocked, respecting Note-Lock timer and App Lock hierarchy
  */
 export async function isNotesUnlocked(userId: string): Promise<boolean> {
   try {
     const cookieStore = await cookies();
+
+    // 1. RULE: APP LOCK ALWAYS OVERRIDES NOTE LOCK
+    // If the main My Qian application is locked, Notes is guaranteed to be locked
+    const appLocked = await isAppLocked();
+    if (appLocked) {
+      return false;
+    }
+
+    // 2. Validate Notes unlock token signature
     const token = cookieStore.get(NOTES_UNLOCKED_COOKIE)?.value;
     if (!token) return false;
 
     const expectedToken = generateNotesUnlockToken(userId);
-    return token === expectedToken;
+    if (token !== expectedToken) return false;
+
+    // 3. Fetch user's configured Note-Lock timeout
+    const [user] = await db
+      .select({ noteLockTimeout: users.noteLockTimeout })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const timeout = user?.noteLockTimeout || "5m";
+
+    // "never" means: remain unlocked while the main app session remains active
+    if (timeout === "never") {
+      return true;
+    }
+
+    // Check last active timestamp for timed Note-Lock
+    const lastActiveStr = cookieStore.get(NOTES_LAST_ACTIVE_COOKIE)?.value;
+    if (!lastActiveStr) {
+      return false;
+    }
+
+    const lastActive = parseInt(lastActiveStr, 10);
+    if (isNaN(lastActive)) {
+      return false;
+    }
+
+    const elapsed = Date.now() - lastActive;
+
+    if (timeout === "immediately") {
+      // If immediately, active timestamp must be within the current immediate session window (< 3s)
+      return elapsed <= 3000;
+    }
+
+    if (timeout === "1m" && elapsed >= 60 * 1000) {
+      return false;
+    }
+
+    if (timeout === "5m" && elapsed >= 5 * 60 * 1000) {
+      return false;
+    }
+
+    return true;
   } catch (err) {
     console.error("isNotesUnlocked error:", err);
     return false;
@@ -36,7 +88,7 @@ export async function isNotesUnlocked(userId: string): Promise<boolean> {
 }
 
 /**
- * Set the HTTP-only unlock cookie for Notes
+ * Set the HTTP-only unlock cookie for Notes and initialize its activity timer
  */
 export async function setNotesUnlockedCookie(userId: string): Promise<void> {
   const cookieStore = await cookies();
@@ -47,7 +99,15 @@ export async function setNotesUnlockedCookie(userId: string): Promise<void> {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 30 * 24 * 60 * 60, // Tied to session
+    maxAge: 30 * 24 * 60 * 60,
+  });
+
+  cookieStore.set(NOTES_LAST_ACTIVE_COOKIE, Date.now().toString(), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 30 * 24 * 60 * 60,
   });
 
   // Clear failed attempt tracking on successful unlock
@@ -56,11 +116,36 @@ export async function setNotesUnlockedCookie(userId: string): Promise<void> {
 }
 
 /**
- * Lock Notes by clearing the unlock cookie
+ * Updates Notes active timestamp strictly during Notes operations
+ */
+export async function updateNotesLastActiveCookie(): Promise<void> {
+  try {
+    const cookieStore = await cookies();
+    if (cookieStore.get(NOTES_UNLOCKED_COOKIE)?.value) {
+      cookieStore.set(NOTES_LAST_ACTIVE_COOKIE, Date.now().toString(), {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: 30 * 24 * 60 * 60,
+      });
+    }
+  } catch {
+    // Read-only server component contexts ignore cookie mutations safely
+  }
+}
+
+/**
+ * Lock Notes by clearing all Notes unlock and timer cookies
  */
 export async function lockNotes(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(NOTES_UNLOCKED_COOKIE);
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete(NOTES_UNLOCKED_COOKIE);
+    cookieStore.delete(NOTES_LAST_ACTIVE_COOKIE);
+  } catch {
+    // Read-only server component contexts ignore cookie mutations safely
+  }
 }
 
 /**
@@ -170,7 +255,7 @@ export async function verifyNotesPasscode(
     return { success: false, error: "Incorrect passcode. Try again." };
   }
 
-  // 5. Unlock notes
+  // 5. Unlock notes and start timer
   await setNotesUnlockedCookie(userId);
   return { success: true };
 }
@@ -197,7 +282,7 @@ export async function setupNotesPasscode(
     })
     .where(eq(users.id, userId));
 
-  // Automatically unlock Notes for the current session
+  // Automatically unlock Notes for the current session and start timer
   await setNotesUnlockedCookie(userId);
   return { success: true };
 }
@@ -244,6 +329,24 @@ export async function changeNotesPasscode(
 }
 
 /**
+ * Update Note-Lock timeout preference
+ */
+export async function updateNoteLockTimeout(
+  userId: string,
+  timeout: "immediately" | "1m" | "5m" | "never"
+): Promise<void> {
+  await db
+    .update(users)
+    .set({
+      noteLockTimeout: timeout,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userId));
+
+  await updateNotesLastActiveCookie();
+}
+
+/**
  * Server-side guard ensuring Notes access is authorized
  */
 export async function requireNotesAccess(): Promise<{ userId: string }> {
@@ -267,6 +370,9 @@ export async function requireNotesAccess(): Promise<{ userId: string }> {
       throw new Error("NOTES_LOCKED");
     }
   }
+
+  // Update activity timestamp during authorized Notes operations
+  await updateNotesLastActiveCookie();
 
   return { userId };
 }
