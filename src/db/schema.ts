@@ -7,6 +7,7 @@ import {
   timestamp,
   date,
   index,
+  integer,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -407,4 +408,82 @@ export const notesRelations = relations(notes, ({ one }) => ({
     references: [noteCategories.id],
   }),
 }));
+
+// ----------------------------------------------------
+// ATTENDANCE TABLES (ISOLATED SYSTEM)
+// ----------------------------------------------------
+
+export const attendanceCategories = pgTable(
+  "attendance_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_att_cat_user").on(table.userId),
+  ]
+);
+
+export const attendanceRecords = pgTable(
+  "attendance_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    categoryId: uuid("category_id").references(() => attendanceCategories.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    durationSeconds: integer("duration_seconds"),
+    status: text("status").notNull().default("IN_PROGRESS"), // 'IN_PROGRESS' | 'COMPLETED'
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_att_rec_user").on(table.userId),
+    index("idx_att_rec_user_status").on(table.userId, table.status),
+    index("idx_att_rec_started_at").on(table.startedAt),
+  ]
+);
+
+export const attendanceCategoriesRelations = relations(
+  attendanceCategories,
+  ({ one, many }) => ({
+    user: one(users, {
+      fields: [attendanceCategories.userId],
+      references: [users.id],
+    }),
+    records: many(attendanceRecords),
+  })
+);
+
+export const attendanceRecordsRelations = relations(
+  attendanceRecords,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [attendanceRecords.userId],
+      references: [users.id],
+    }),
+    category: one(attendanceCategories, {
+      fields: [attendanceRecords.categoryId],
+      references: [attendanceCategories.id],
+    }),
+  })
+);
 

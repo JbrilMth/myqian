@@ -19,6 +19,7 @@ import {
   Calendar as CalendarIcon,
   Search,
   StickyNote,
+  ClockCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -100,6 +101,11 @@ export function Sidebar({ onOpenTransactionModal }: SidebarProps) {
     {
       label: "TOOLS",
       items: [
+        {
+          name: "Attendance",
+          href: "/attendance",
+          icon: ClockCheck,
+        },
         {
           name: "Notes",
           href: "/notes",

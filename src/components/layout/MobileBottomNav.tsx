@@ -20,6 +20,7 @@ import {
   Calendar as CalendarIcon,
   Search,
   StickyNote,
+  ClockCheck,
   X,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -114,6 +115,12 @@ export function MobileBottomNav({ onOpenTransactionModal }: MobileBottomNavProps
     {
       label: "TOOLS",
       items: [
+        {
+          name: "Attendance",
+          href: "/attendance",
+          icon: ClockCheck,
+          desc: "Start & end activity timestamp tracker",
+        },
         {
           name: "Notes",
           href: "/notes",
