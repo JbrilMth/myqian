@@ -19,8 +19,9 @@ import type { TransactionInitialValues } from "@/components/layout/AppShell";
 import { formatCurrency } from "@/lib/finance/decimal";
 import { getAccountIdentity } from "@/lib/finance/account-identities";
 import { cn } from "@/lib/utils";
-import { ArrowRight, Users, Building2, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { Building2, Users, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import { CategorySelector } from "@/components/categories/CategorySelector";
+import { TimePicker } from "@/components/ui/TimePicker";
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -1125,6 +1126,11 @@ export function TransactionModal({
               type="date"
               required
               value={date}
+              onClick={(e) => {
+                try {
+                  e.currentTarget.showPicker?.();
+                } catch {}
+              }}
               onChange={(e) => setDate(e.target.value)}
               className="w-full px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-xs font-medium"
             />
@@ -1133,11 +1139,9 @@ export function TransactionModal({
             <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
               Time (Optional)
             </label>
-            <input
-              type="time"
+            <TimePicker
               value={time}
-              onChange={(e) => setTime(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-xs font-medium"
+              onChange={setTime}
             />
           </div>
         </div>
